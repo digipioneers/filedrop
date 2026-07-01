@@ -1,0 +1,107 @@
+# render.yaml — Deploy to Render.com
+# Push this to GitHub, then connect repo at dashboard.render.com
+# All services deploy automatically.
+
+services:
+  # ── Backend API ────────────────────────────────────────────
+  - type: web
+    name: cfup-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: starter          # $7/mo — upgrade to standard for production
+    healthCheckPath: /health/liveness
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: APP_URL
+        fromService:
+          type: web
+          name: cfup-backend
+          property: host
+      - key: SHOPIFY_API_KEY
+        sync: false        # Set manually in Render dashboard
+      - key: SHOPIFY_API_SECRET
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DB_HOST
+        fromDatabase:
+          name: cfup-mysql
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: cfup-mysql
+          property: port
+      - key: DB_USERNAME
+        fromDatabase:
+          name: cfup-mysql
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: cfup-mysql
+          property: password
+      - key: DB_DATABASE
+        fromDatabase:
+          name: cfup-mysql
+          property: database
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: cfup-redis
+          property: connectionString
+      - key: AWS_REGION
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_S3_BUCKET
+        sync: false
+      - key: EMAIL_PROVIDER
+        value: smtp
+      - key: EMAIL_FROM
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: 587
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: CLAMAV_HOST
+        value: localhost   # ClamAV runs as sidecar
+      - key: CLAMAV_PORT
+        value: 3310
+      - key: LOG_LEVEL
+        value: info
+
+  # ── Frontend ───────────────────────────────────────────────
+  - type: web
+    name: cfup-frontend
+    runtime: docker
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    plan: starter
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: cfup-backend
+          property: host
+
+  # ── Redis ──────────────────────────────────────────────────
+  - type: redis
+    name: cfup-redis
+    plan: starter          # $10/mo
+    maxmemoryPolicy: noeviction
+
+databases:
+  # ── MySQL ──────────────────────────────────────────────────
+  - name: cfup-mysql
+    databaseName: cfup_db
+    user: cfup_user
+    plan: starter          # $7/mo

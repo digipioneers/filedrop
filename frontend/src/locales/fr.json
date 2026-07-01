@@ -1,0 +1,41 @@
+{
+  "common": {
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "delete": "Supprimer",
+    "edit": "Modifier",
+    "loading": "Chargement...",
+    "error": "Une erreur s'est produite",
+    "success": "Succès",
+    "confirm": "Confirmer",
+    "back": "Retour",
+    "next": "Suivant",
+    "required": "Requis"
+  },
+  "upload": {
+    "button_text": "Télécharger un fichier",
+    "drag_drop": "Faites glisser et déposez des fichiers ici, ou cliquez pour parcourir",
+    "drag_drop_mobile": "Appuyez pour sélectionner des fichiers",
+    "progress": "Téléchargement... {{percent}}%",
+    "success": "Fichier téléchargé avec succès",
+    "error_size": "Fichier trop volumineux. La taille maximale est {{max}}.",
+    "error_type": "Type de fichier non autorisé. Types autorisés : {{types}}.",
+    "error_count": "Trop de fichiers. Le maximum autorisé est {{max}}.",
+    "error_virus": "Ce fichier n'a pas pu être accepté pour des raisons de sécurité.",
+    "preview": "Aperçu",
+    "remove": "Supprimer",
+    "uploading": "Téléchargement",
+    "complete": "Terminé",
+    "camera": "Prendre une photo",
+    "browse": "Parcourir les fichiers"
+  },
+  "billing": {
+    "title": "Plan et facturation",
+    "current_plan": "Plan actuel",
+    "upgrade": "Mettre à niveau",
+    "cancel": "Annuler l'abonnement",
+    "trial_ends": "L'essai se termine le {{date}}",
+    "monthly": "/mois",
+    "free": "Gratuit"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "custom-file-upload-pro",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Shopify app for customer file uploads \u2014 production-ready SaaS",
+  "scripts": {
+    "setup": "node scripts/setup.js",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "cd backend && npm run start:dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "echo \"Run from backend/ or frontend/ directory\"",
+    "build:backend": "cd backend && npm ci && npx nest build",
+    "build:frontend": "cd frontend && npm ci && npm run build",
+    "start:prod": "cd backend && npm run start:prod",
+    "deploy": "bash deploy/deploy.sh",
+    "migration:run": "cd backend && npx typeorm migration:run -d src/common/config/database.config.ts",
+    "migration:revert": "cd backend && npx typeorm migration:revert -d src/common/config/database.config.ts",
+    "test": "cd backend && npm test",
+    "test:frontend": "cd frontend && npm test",
+    "test:all": "npm test && npm run test:frontend",
+    "lint": "cd backend && npm run lint && cd ../frontend && npm run lint",
+    "register-webhooks": "node scripts/register-webhooks.js"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}

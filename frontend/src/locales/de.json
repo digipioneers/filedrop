@@ -1,0 +1,41 @@
+{
+  "common": {
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "delete": "Löschen",
+    "edit": "Bearbeiten",
+    "loading": "Laden...",
+    "error": "Ein Fehler ist aufgetreten",
+    "success": "Erfolgreich",
+    "confirm": "Bestätigen",
+    "back": "Zurück",
+    "next": "Weiter",
+    "required": "Erforderlich"
+  },
+  "upload": {
+    "button_text": "Datei hochladen",
+    "drag_drop": "Dateien hier ablegen oder klicken zum Durchsuchen",
+    "drag_drop_mobile": "Tippen um Dateien auszuwählen",
+    "progress": "Hochladen... {{percent}}%",
+    "success": "Datei erfolgreich hochgeladen",
+    "error_size": "Datei ist zu groß. Maximale Größe ist {{max}}.",
+    "error_type": "Dateityp nicht erlaubt. Erlaubte Typen: {{types}}.",
+    "error_count": "Zu viele Dateien. Maximum ist {{max}}.",
+    "error_virus": "Diese Datei konnte aus Sicherheitsgründen nicht akzeptiert werden.",
+    "preview": "Vorschau",
+    "remove": "Entfernen",
+    "uploading": "Hochladen",
+    "complete": "Abgeschlossen",
+    "camera": "Foto aufnehmen",
+    "browse": "Dateien durchsuchen"
+  },
+  "billing": {
+    "title": "Plan & Abrechnung",
+    "current_plan": "Aktueller Plan",
+    "upgrade": "Upgraden",
+    "cancel": "Abonnement kündigen",
+    "trial_ends": "Testphase endet am {{date}}",
+    "monthly": "/Monat",
+    "free": "Kostenlos"
+  }
+}

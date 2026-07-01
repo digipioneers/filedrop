@@ -1,0 +1,27 @@
+name = "Custom File Upload Pro"
+client_id = "7318f849571a384c67cded3e72b6bfad"
+application_url = "https://filedrop-production-28dd.up.railway.app"
+embedded = true
+
+[access_scopes]
+scopes = "read_products,write_products,read_orders,write_orders,read_customers,write_metafields,read_metafields"
+
+[auth]
+redirect_urls = [
+  "https://filedrop-production-28dd.up.railway.app/api/v1/auth/callback"
+]
+
+[webhooks]
+api_version = "2024-01"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "/api/v1/webhooks/app/uninstalled"
+
+  [[webhooks.subscriptions]]
+  topics = [ "orders/create" ]
+  uri = "/api/v1/webhooks/orders/create"
+
+[build]
+automatically_update_urls_on_dev = true
+dev_store_url = "filedrop-practice.myshopify.com"

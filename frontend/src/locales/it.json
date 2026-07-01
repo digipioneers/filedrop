@@ -1,0 +1,41 @@
+{
+  "common": {
+    "save": "Salva",
+    "cancel": "Annulla",
+    "delete": "Elimina",
+    "edit": "Modifica",
+    "loading": "Caricamento...",
+    "error": "Si è verificato un errore",
+    "success": "Successo",
+    "confirm": "Conferma",
+    "back": "Indietro",
+    "next": "Avanti",
+    "required": "Obbligatorio"
+  },
+  "upload": {
+    "button_text": "Carica file",
+    "drag_drop": "Trascina i file qui o clicca per sfogliare",
+    "drag_drop_mobile": "Tocca per selezionare i file",
+    "progress": "Caricamento... {{percent}}%",
+    "success": "File caricato con successo",
+    "error_size": "File troppo grande. Dimensione massima {{max}}.",
+    "error_type": "Tipo di file non consentito. Tipi consentiti: {{types}}.",
+    "error_count": "Troppi file. Il massimo consentito è {{max}}.",
+    "error_virus": "Questo file non può essere accettato per motivi di sicurezza.",
+    "preview": "Anteprima",
+    "remove": "Rimuovi",
+    "uploading": "Caricamento",
+    "complete": "Completato",
+    "camera": "Scatta foto",
+    "browse": "Sfoglia file"
+  },
+  "billing": {
+    "title": "Piano e fatturazione",
+    "current_plan": "Piano attuale",
+    "upgrade": "Aggiorna",
+    "cancel": "Annulla abbonamento",
+    "trial_ends": "La prova termina il {{date}}",
+    "monthly": "/mese",
+    "free": "Gratuito"
+  }
+}

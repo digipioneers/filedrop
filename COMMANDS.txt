@@ -1,0 +1,294 @@
+=========================================================
+  CUSTOM FILE UPLOAD PRO — COMMAND REFERENCE
+  Node.js + PM2 + Caddy + MySQL + MinIO (no AWS, no Docker)
+=========================================================
+
+PREREQUISITES
+─────────────
+  Node.js  >= 20.x   (nodejs.org)
+  npm      >= 10.x
+  MySQL    >= 8.0    (local dev only)
+  MinIO               (local dev only — download at min.io)
+  ClamAV              (local dev only — brew install clamav / apt install clamav)
+  Shopify CLI >= 3.x  npm install -g @shopify/cli
+
+─────────────────────────────────────────────────────────
+1. FIRST-TIME LOCAL SETUP
+─────────────────────────────────────────────────────────
+
+# Unzip the project and enter the folder
+cd filedrop
+
+# Copy environment files
+cp backend/.env.example      backend/.env
+cp backend/.env.prod.example .env.prod
+
+# Edit backend/.env — fill in at minimum:
+#   SHOPIFY_API_KEY, SHOPIFY_API_SECRET
+#   DB_HOST, DB_USERNAME, DB_PASSWORD, DB_DATABASE
+
+# Install all dependencies
+cd backend  && npm install && cd ..
+cd frontend && npm install && cd ..
+
+─────────────────────────────────────────────────────────
+2. START LOCAL SERVICES (MySQL + MinIO + ClamAV)
+─────────────────────────────────────────────────────────
+
+# ── MySQL (must be running before starting the app) ──
+# macOS:
+brew services start mysql
+# Ubuntu:
+sudo systemctl start mysql
+
+# ── MinIO (local S3-compatible file storage) ─────────
+# macOS:
+brew install minio/stable/minio
+MINIO_ROOT_USER=cfup_minio MINIO_ROOT_PASSWORD=cfup_secret \
+  minio server ~/minio-data --console-address :9001
+
+# Ubuntu:
+wget https://dl.min.io/server/minio/release/linux-amd64/minio
+chmod +x minio && sudo mv minio /usr/local/bin/
+MINIO_ROOT_USER=cfup_minio MINIO_ROOT_PASSWORD=cfup_secret \
+  minio server ~/minio-data --console-address :9001
+
+# MinIO web console: http://localhost:9001
+# Create a bucket named "cfup-uploads" in the console
+
+# ── ClamAV (virus scanner) ────────────────────────────
+# macOS:
+brew install clamav && freshclam && clamd
+# Ubuntu:
+sudo apt install clamav clamav-daemon && sudo freshclam && sudo systemctl start clamav-daemon
+
+─────────────────────────────────────────────────────────
+3. CREATE THE DATABASE
+─────────────────────────────────────────────────────────
+
+mysql -u root -p <<SQL
+  CREATE DATABASE cfup_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+  CREATE USER 'cfup_user'@'localhost' IDENTIFIED BY 'cfup_password';
+  GRANT ALL PRIVILEGES ON cfup_db.* TO 'cfup_user'@'localhost';
+  FLUSH PRIVILEGES;
+SQL
+
+# Apply initial schema
+mysql -u cfup_user -p cfup_db < database/init.sql
+
+# Run migrations
+cd backend && npm run migration:run
+
+─────────────────────────────────────────────────────────
+4. START THE APP (local development)
+─────────────────────────────────────────────────────────
+
+# ── Terminal 1: Backend (hot reload)
+cd backend
+npm run start:dev
+
+# ── Terminal 2: Frontend (Vite dev server on :5173)
+cd frontend
+npm run dev
+
+# Expose backend for Shopify OAuth callbacks (required):
+npx ngrok http 3000
+# Then update APP_URL in backend/.env with your ngrok URL
+
+─────────────────────────────────────────────────────────
+5. TESTING
+─────────────────────────────────────────────────────────
+
+── BACKEND (NestJS / Jest) ──────────────────────────────
+
+cd backend
+
+# Run all unit tests
+npm test
+
+# Run tests in watch mode
+npm run test:watch
+
+# Run with coverage report
+npm run test:coverage
+
+# Run a specific test file
+npx jest test/billing.service.spec.ts
+
+── FRONTEND (Vitest) ────────────────────────────────────
+
+cd frontend
+
+# Run all tests
+npm test
+
+# Watch mode
+npm run test:watch
+
+# Coverage report
+npm run test:coverage
+
+─────────────────────────────────────────────────────────
+6. SHOPIFY CLI — THEME & ADMIN EXTENSIONS
+─────────────────────────────────────────────────────────
+
+# Authenticate with your store
+shopify auth login --store YOUR-STORE.myshopify.com
+
+# Start dev server (hot-reloads theme extension)
+shopify app dev
+
+# Deploy extensions to Shopify
+shopify app deploy
+
+─────────────────────────────────────────────────────────
+7. DATABASE COMMANDS
+─────────────────────────────────────────────────────────
+
+cd backend
+
+# Run pending migrations
+npm run migration:run
+
+# Revert last migration
+npm run migration:revert
+
+# Generate migration after entity change
+npm run migration:generate -- database/migrations/MigrationName
+
+# Seed plan data
+npm run seed
+
+# Open MySQL shell (local)
+mysql -u cfup_user -p cfup_db
+
+─────────────────────────────────────────────────────────
+8. PRODUCTION DEPLOY — VPS (one command)
+─────────────────────────────────────────────────────────
+
+# On your Ubuntu 22.04 / 24.04 VPS:
+
+# 1. Upload the project
+scp -r filedrop/ user@YOUR-SERVER:/opt/cfup
+
+# 2. SSH in
+ssh user@YOUR-SERVER
+
+# 3. Run the deploy script (installs everything automatically)
+cd /opt/cfup
+sudo bash deploy/deploy.sh
+
+# The script installs and configures:
+#   Node.js 20, PM2, MySQL 8, Caddy, ClamAV, MinIO
+# It then:
+#   Builds the backend and frontend
+#   Runs database migrations
+#   Starts the app with PM2 (2 clustered processes)
+#   Configures Caddy with automatic HTTPS
+#   Sets up firewall (ports 22, 80, 443)
+#   Configures auto-start on server reboot
+
+─────────────────────────────────────────────────────────
+9. PRODUCTION MANAGEMENT COMMANDS
+─────────────────────────────────────────────────────────
+
+# View live logs
+pm2 logs cfup-backend
+
+# Restart app
+pm2 restart cfup-backend
+
+# Monitor CPU and memory
+pm2 monit
+
+# Reload config without downtime
+pm2 reload cfup-backend
+
+# Stop app
+pm2 stop cfup-backend
+
+# Reload Caddy after config change
+sudo caddy reload --config /etc/caddy/Caddyfile
+
+# Check Caddy status
+sudo systemctl status caddy
+
+# MinIO status
+sudo systemctl status minio
+
+# View MinIO files in browser
+# http://YOUR-SERVER-IP:9001
+#   username: (MINIO_ROOT_USER from .env.prod)
+#   password: (MINIO_ROOT_PASSWORD from .env.prod)
+
+# Database shell (production)
+mysql -u cfup_user -p cfup_db
+
+─────────────────────────────────────────────────────────
+10. CI/CD (GitHub Actions — automatic on push to main)
+─────────────────────────────────────────────────────────
+
+# Required GitHub Secrets (Settings → Secrets → Actions):
+#   VPS_HOST          Your server IP or hostname
+#   VPS_USER          SSH username (e.g. ubuntu or root)
+#   VPS_SSH_KEY       Your private SSH key (contents of ~/.ssh/id_rsa)
+#   APP_DOMAIN        Your domain (e.g. yourapp.com)
+#   SHOPIFY_API_KEY   From Shopify Partners dashboard
+#   APP_URL           https://yourapp.com
+
+# Pipeline on push to main:
+#   1. Run backend tests (Jest + MySQL service container)
+#   2. Run frontend tests (Vitest)
+#   3. Security scan (Trivy)
+#   4. SSH deploy → git pull + npm build + pm2 restart
+#   5. Health check
+
+# Trigger manually
+gh workflow run deploy.yml --ref main
+
+─────────────────────────────────────────────────────────
+11. ENVIRONMENT VARIABLES QUICK REFERENCE
+─────────────────────────────────────────────────────────
+
+  Variable                  Required  Description
+  ────────────────────────  ────────  ─────────────────────────────────
+  SHOPIFY_API_KEY           YES       From Partners dashboard
+  SHOPIFY_API_SECRET        YES       From Partners dashboard
+  SHOPIFY_SCOPES            YES       API permission scopes
+  APP_URL                   YES       Public HTTPS URL of app
+  APP_DOMAIN                YES       Domain only (prod), e.g. yourapp.com
+  JWT_SECRET                YES       Random 64-char hex string
+  DB_HOST                   YES       MySQL host (localhost for VPS)
+  DB_PORT                   NO        Default: 3306
+  DB_USERNAME               YES       MySQL username
+  DB_PASSWORD               YES       MySQL password
+  DB_DATABASE               YES       MySQL database name
+  STORAGE_PROVIDER          NO        Default: minio
+  MINIO_ENDPOINT            YES       http://localhost:9000 (VPS deploy)
+  MINIO_ROOT_USER           YES       MinIO username
+  MINIO_ROOT_PASSWORD       YES       MinIO password
+  MINIO_BUCKET              YES       Bucket name (create in MinIO console)
+  CLAMAV_HOST               NO        Default: localhost
+  CLAMAV_PORT               NO        Default: 3310
+  SMTP_HOST                 YES       SMTP server (smtp.resend.com for prod)
+  SMTP_PORT                 NO        Default: 587
+  SMTP_USER                 NO        SMTP username
+  SMTP_PASS                 NO        SMTP password / API key
+  EMAIL_FROM                YES       Sender address
+
+─────────────────────────────────────────────────────────
+12. SHOPIFY APP STORE SUBMISSION
+─────────────────────────────────────────────────────────
+
+# 1. Create Shopify Partners account → partners.shopify.com
+# 2. Apps → Create app → fill App URL and Redirect URL
+# 3. Copy API key + secret → backend/.env (and .env.prod)
+# 4. Set required scopes:
+#      read_products, read_orders, write_orders
+#      read_customers, write_metafields, read_metafields
+# 5. Submit listing → Apps → Distribution → App Store
+# 6. Provide 7 screenshots (docs/APP_STORE_SCREENSHOTS.md)
+# 7. Privacy Policy: https://yourdomain.com/privacy.html
+# 8. Terms of Service: https://yourdomain.com/terms.html
+# 9. Pass Built for Shopify checklist (docs/APP_STORE.md)
+=========================================================

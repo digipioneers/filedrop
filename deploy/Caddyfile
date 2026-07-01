@@ -1,0 +1,115 @@
+# ═══════════════════════════════════════════════════════════
+# Caddyfile — Custom File Upload Pro
+#
+# Caddy automatically obtains and renews TLS certificates
+# from Let's Encrypt. No manual SSL setup required.
+#
+# Set APP_DOMAIN in your .env.prod file.
+# ═══════════════════════════════════════════════════════════
+
+{env.APP_DOMAIN} {
+
+  # ── Security Headers ──────────────────────────────────────
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    -Server
+  }
+
+  # ── API Routes → Backend ─────────────────────────────────
+  handle /auth/* {
+    reverse_proxy backend:3000
+  }
+
+  handle /uploads/* {
+    # Rate limit uploads: 20 per minute per IP
+    rate_limit {
+      zone uploads {
+        key {remote_host}
+        events 20
+        window 1m
+      }
+    }
+    reverse_proxy backend:3000
+  }
+
+  handle /storefront/* {
+    # CORS for Shopify storefront requests
+    header Access-Control-Allow-Origin "*"
+    header Access-Control-Allow-Methods "GET, POST, OPTIONS"
+    header Access-Control-Allow-Headers "Content-Type, X-Shopify-Shop-Domain"
+
+    @options method OPTIONS
+    respond @options 204
+
+    # Rate limit storefront uploads
+    rate_limit {
+      zone storefront {
+        key {remote_host}
+        events 20
+        window 1m
+      }
+    }
+    reverse_proxy backend:3000
+  }
+
+  handle /webhooks/* {
+    # Preserve raw body for HMAC validation
+    reverse_proxy backend:3000 {
+      header_up X-Real-IP {remote_host}
+    }
+  }
+
+  handle /gdpr/* {
+    reverse_proxy backend:3000
+  }
+
+  handle /health* {
+    reverse_proxy backend:3000
+  }
+
+  handle /billing/* {
+    reverse_proxy backend:3000
+  }
+
+  handle /dashboard/* {
+    reverse_proxy backend:3000
+  }
+
+  handle /orders/* {
+    reverse_proxy backend:3000
+  }
+
+  handle /settings/* {
+    reverse_proxy backend:3000
+  }
+
+  handle /api/* {
+    reverse_proxy backend:3000
+  }
+
+  # ── Frontend SPA ─────────────────────────────────────────
+  handle {
+    reverse_proxy frontend:80
+  }
+
+  # ── Logging ──────────────────────────────────────────────
+  log {
+    output file /var/log/caddy/access.log {
+      roll_size 10mb
+      roll_keep 10
+    }
+    format json
+  }
+
+  # ── Compression ──────────────────────────────────────────
+  encode gzip zstd
+}
+
+# Redirect www → non-www
+www.{env.APP_DOMAIN} {
+  redir https://{env.APP_DOMAIN}{uri} permanent
+}

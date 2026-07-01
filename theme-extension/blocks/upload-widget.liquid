@@ -1,0 +1,773 @@
+{% comment %}
+  Custom File Upload Pro - Product Page Upload Widget
+  Theme App Extension Block — v2 (camera + image editor)
+{% endcomment %}
+
+<div
+  id="cfup-upload-widget"
+  class="cfup-widget"
+  data-shop="{{ shop.domain }}"
+  data-product-id="{{ product.id }}"
+  data-variant-id="{{ product.selected_or_first_available_variant.id }}"
+  data-api-url="{{ block.settings.api_url }}"
+  data-button-color="{{ block.settings.button_color }}"
+  data-button-text="{{ block.settings.button_text }}"
+  data-border-radius="{{ block.settings.border_radius }}"
+  data-enable-camera="{{ block.settings.enable_camera }}"
+>
+  <div id="cfup-fields-container"></div>
+</div>
+
+<!-- Cropper.js modal overlay -->
+<div id="cfup-editor-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.82);z-index:99999;align-items:center;justify-content:center;flex-direction:column;">
+  <div style="background:#fff;border-radius:12px;max-width:680px;width:calc(100% - 32px);padding:20px;box-shadow:0 24px 64px rgba(0,0,0,.4);">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <strong style="font-size:16px;">Edit Image</strong>
+      <button id="cfup-editor-close" style="background:none;border:none;font-size:22px;cursor:pointer;color:#555;">✕</button>
+    </div>
+    <div style="position:relative;max-height:420px;overflow:hidden;border-radius:8px;background:#111;">
+      <img id="cfup-editor-img" src="" alt="Edit" style="max-width:100%;display:block;" />
+    </div>
+    <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+      <button class="cfup-editor-btn" id="cfup-rotate-left" title="Rotate Left">↺ Rotate Left</button>
+      <button class="cfup-editor-btn" id="cfup-rotate-right" title="Rotate Right">↻ Rotate Right</button>
+      <button class="cfup-editor-btn" id="cfup-zoom-in" title="Zoom In">＋ Zoom In</button>
+      <button class="cfup-editor-btn" id="cfup-zoom-out" title="Zoom Out">－ Zoom Out</button>
+      <button class="cfup-editor-btn" id="cfup-reset" title="Reset">⟲ Reset</button>
+      <div style="flex:1;"></div>
+      <button id="cfup-editor-apply" style="background:#008060;color:#fff;border:none;border-radius:6px;padding:10px 22px;font-weight:700;cursor:pointer;font-size:14px;">
+        Apply &amp; Upload
+      </button>
+    </div>
+  </div>
+</div>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.js"></script>
+
+<style>
+  :root {
+    --cfup-btn-color: {{ block.settings.button_color | default: '#008060' }};
+    --cfup-btn-radius: {{ block.settings.border_radius | default: 4 }}px;
+  }
+
+  .cfup-widget { margin: 16px 0; }
+
+  .cfup-field-wrapper {
+    margin-bottom: 20px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  .cfup-field-label {
+    display: block;
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: #1a1a1a;
+  }
+
+  .cfup-field-label .cfup-required { color: #cc0000; margin-left: 2px; }
+
+  .cfup-field-description {
+    font-size: 13px;
+    color: #666;
+    margin-bottom: 8px;
+  }
+
+  .cfup-dropzone {
+    border: 2px dashed #d0d0d0;
+    border-radius: 8px;
+    padding: 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
+    position: relative;
+    background: #fafafa;
+  }
+
+  .cfup-dropzone:hover,
+  .cfup-dropzone.cfup-dragover {
+    border-color: var(--cfup-btn-color);
+    background: #f0faf8;
+  }
+
+  .cfup-dropzone input[type="file"] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+  }
+
+  .cfup-dropzone-icon { font-size: 36px; display: block; margin-bottom: 8px; }
+  .cfup-dropzone-text { font-size: 14px; color: #555; }
+
+  .cfup-upload-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+    justify-content: center;
+  }
+
+  .cfup-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 20px;
+    background: var(--cfup-btn-color);
+    color: #fff;
+    border: none;
+    border-radius: var(--cfup-btn-radius);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity .2s;
+  }
+
+  .cfup-button:hover { opacity: .88; }
+
+  .cfup-button-secondary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 20px;
+    background: #fff;
+    color: var(--cfup-btn-color);
+    border: 2px solid var(--cfup-btn-color);
+    border-radius: var(--cfup-btn-radius);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .cfup-progress-bar-wrapper {
+    margin-top: 12px;
+    background: #f0f0f0;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .cfup-progress-bar-track { height: 6px; background: #e8e8e8; border-radius: 4px; }
+  .cfup-progress-bar-fill {
+    height: 6px;
+    background: var(--cfup-btn-color);
+    border-radius: 4px;
+    transition: width .2s;
+    width: 0%;
+  }
+  .cfup-progress-text { font-size: 12px; color: #555; margin-top: 4px; text-align: center; }
+
+  .cfup-file-list { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+
+  .cfup-file-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: #fff;
+    border: 1px solid #e8e8e8;
+    border-radius: 8px;
+    position: relative;
+  }
+
+  .cfup-file-preview {
+    width: 48px;
+    height: 48px;
+    object-fit: cover;
+    border-radius: 6px;
+    flex-shrink: 0;
+    border: 1px solid #eee;
+  }
+
+  .cfup-file-info { flex: 1; min-width: 0; }
+  .cfup-file-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cfup-file-size { font-size: 12px; color: #888; margin-top: 2px; }
+
+  .cfup-file-status { font-size: 12px; font-weight: 600; flex-shrink: 0; }
+  .cfup-file-status.uploading { color: #666; }
+  .cfup-file-status.success { color: #008060; }
+  .cfup-file-status.error { color: #cc0000; }
+
+  .cfup-file-remove {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #aaa;
+    font-size: 16px;
+    line-height: 1;
+    padding: 2px 4px;
+  }
+  .cfup-file-remove:hover { color: #cc0000; }
+
+  .cfup-error {
+    background: #fff3f3;
+    border: 1px solid #ffc5c5;
+    border-radius: 6px;
+    color: #cc0000;
+    font-size: 13px;
+    padding: 10px 14px;
+    margin-top: 10px;
+  }
+
+  .cfup-help-text {
+    font-size: 12px;
+    color: #888;
+    margin-top: 8px;
+  }
+
+  .cfup-editor-btn {
+    background: #f4f4f4;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background .15s;
+  }
+
+  .cfup-editor-btn:hover { background: #e8e8e8; }
+
+  @media (max-width: 480px) {
+    .cfup-dropzone { padding: 16px; }
+    .cfup-button, .cfup-button-secondary { padding: 10px 14px; font-size: 13px; }
+  }
+</style>
+
+<script>
+(function () {
+  const widget = document.getElementById('cfup-upload-widget');
+  if (!widget) return;
+
+  const SHOP         = widget.dataset.shop;
+  const PRODUCT_ID   = widget.dataset.productId;
+  const API_URL      = widget.dataset.apiUrl || 'https://filedrop-production-28dd.up.railway.app/api/v1';
+  const BTN_COLOR    = widget.dataset.buttonColor || '#008060';
+  const BTN_TEXT     = widget.dataset.buttonText || 'Upload File';
+  const ENABLE_CAMERA = widget.dataset.enableCamera === 'true';
+  const container    = document.getElementById('cfup-fields-container');
+
+  widget.style.setProperty('--cfup-btn-color', BTN_COLOR);
+
+  let allUploadedIds = [];
+  let cropper = null;
+  let pendingEditorCallback = null;
+
+  // ── Custom CSS injection ────────────────────────────────────────────────
+  // Merchant-defined CSS from Settings → Appearance → Custom CSS.
+  // Scoped under #cfup-upload-widget so it can only affect this widget,
+  // not the rest of the theme.
+
+  async function loadCustomCss() {
+    try {
+      const res = await fetch(`${API_URL}/storefront/settings/${encodeURIComponent(SHOP)}`);
+      if (!res.ok) return;
+      const json = await res.json();
+      const css = json?.data?.customCss;
+      if (!css) return;
+
+      const styleTag = document.createElement('style');
+      styleTag.id = 'cfup-custom-css';
+      // Scope every rule under the widget root so merchant CSS can't
+      // accidentally (or intentionally) affect the rest of the storefront.
+      styleTag.textContent = `#cfup-upload-widget { } \n${css}`;
+      document.head.appendChild(styleTag);
+    } catch (e) {
+      console.error('[CFUP] Failed to load custom CSS:', e);
+    }
+  }
+  loadCustomCss();
+
+  // ── Image editor ─────────────────────────────────────────────────────────
+
+  const modal      = document.getElementById('cfup-editor-modal');
+  const editorImg  = document.getElementById('cfup-editor-img');
+
+  function openEditor(file, onDone) {
+    pendingEditorCallback = onDone;
+    const url = URL.createObjectURL(file);
+    editorImg.src = url;
+    modal.style.display = 'flex';
+
+    // Small delay so img loads before Cropper reads dimensions
+    setTimeout(() => {
+      if (cropper) { cropper.destroy(); }
+      cropper = new Cropper(editorImg, {
+        viewMode: 1,
+        autoCropArea: 1,
+        movable: true,
+        zoomable: true,
+        rotatable: true,
+        scalable: false,
+        responsive: true,
+      });
+    }, 100);
+  }
+
+  document.getElementById('cfup-editor-close').addEventListener('click', () => {
+    modal.style.display = 'none';
+    if (cropper) { cropper.destroy(); cropper = null; }
+    pendingEditorCallback = null;
+  });
+
+  document.getElementById('cfup-rotate-left').addEventListener('click', () => cropper?.rotate(-90));
+  document.getElementById('cfup-rotate-right').addEventListener('click', () => cropper?.rotate(90));
+  document.getElementById('cfup-zoom-in').addEventListener('click', () => cropper?.zoom(0.1));
+  document.getElementById('cfup-zoom-out').addEventListener('click', () => cropper?.zoom(-0.1));
+  document.getElementById('cfup-reset').addEventListener('click', () => cropper?.reset());
+
+  document.getElementById('cfup-editor-apply').addEventListener('click', () => {
+    if (!cropper || !pendingEditorCallback) return;
+    cropper.getCroppedCanvas().toBlob((blob) => {
+      modal.style.display = 'none';
+      cropper.destroy();
+      cropper = null;
+      const editedFile = new File([blob], 'edited-image.jpg', { type: 'image/jpeg' });
+      pendingEditorCallback(editedFile);
+      pendingEditorCallback = null;
+    }, 'image/jpeg', 0.92);
+  });
+
+  // ── Fetch fields ─────────────────────────────────────────────────────────
+
+  async function loadFields() {
+    const variantId = widget.dataset.variantId;
+    try {
+      const url = new URL(`${API_URL}/storefront/fields`);
+      url.searchParams.set('shop', SHOP);
+      url.searchParams.set('productId', PRODUCT_ID);
+      if (variantId) url.searchParams.set('variantId', variantId);
+
+      const res = await fetch(url.toString());
+      if (!res.ok) return;
+      const json = await res.json();
+      const fields = json.data || [];
+      fields.forEach((field) => container.appendChild(buildField(field)));
+    } catch (e) {
+      console.error('[CFUP] Failed to load upload fields:', e);
+    }
+  }
+
+  // Rebuild on variant change
+  document.addEventListener('variant:changed', (e) => {
+    const v = e?.detail?.variant;
+    if (v) {
+      widget.dataset.variantId = v.id;
+      container.innerHTML = '';
+      allUploadedIds = [];
+      loadFields();
+    }
+  });
+
+  // ── Build a single field UI ───────────────────────────────────────────────
+
+  function buildField(field) {
+    const uploadedFiles = [];
+    const uploadedFileIds = [];
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'cfup-field-wrapper';
+
+    // Label
+    if (field.label) {
+      const label = document.createElement('label');
+      label.className = 'cfup-field-label';
+      label.textContent = field.label;
+      if (field.required) {
+        const star = document.createElement('span');
+        star.className = 'cfup-required';
+        star.textContent = ' *';
+        label.appendChild(star);
+      }
+      wrapper.appendChild(label);
+    }
+
+    // Description
+    if (field.description) {
+      const desc = document.createElement('p');
+      desc.className = 'cfup-field-description';
+      desc.textContent = field.description;
+      wrapper.appendChild(desc);
+    }
+
+    // Dropzone
+    const dropzone = document.createElement('div');
+    dropzone.className = 'cfup-dropzone';
+
+    const icon = document.createElement('span');
+    icon.className = 'cfup-dropzone-icon';
+    icon.textContent = field.fieldType === 'image' ? '🖼️' : field.fieldType === 'pdf' ? '📄' : '📎';
+    dropzone.appendChild(icon);
+
+    const dropText = document.createElement('p');
+    dropText.className = 'cfup-dropzone-text';
+    dropText.textContent = 'Drag & drop files here or choose below';
+    dropzone.appendChild(dropText);
+
+    // Hidden file input (browse)
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.style.cssText = 'position:absolute;inset:0;opacity:0;cursor:pointer;';
+    fileInput.multiple = field.maxFiles > 1;
+    if (field.allowedExtensions?.length) {
+      fileInput.accept = field.allowedExtensions.map((e) => '.' + e).join(',');
+    } else if (field.fieldType === 'image') {
+      fileInput.accept = 'image/*';
+    }
+    dropzone.appendChild(fileInput);
+    wrapper.appendChild(dropzone);
+
+    // Action buttons
+    const actions = document.createElement('div');
+    actions.className = 'cfup-upload-actions';
+
+    const browseBtn = document.createElement('button');
+    browseBtn.className = 'cfup-button';
+    browseBtn.textContent = field.buttonText || BTN_TEXT;
+    browseBtn.type = 'button';
+    browseBtn.addEventListener('click', (e) => { e.stopPropagation(); fileInput.click(); });
+    actions.appendChild(browseBtn);
+
+    // Camera button (mobile/desktop)
+    if (ENABLE_CAMERA && (field.fieldType === 'image' || field.fieldType === 'custom')) {
+      const camInput = document.createElement('input');
+      camInput.type = 'file';
+      camInput.accept = 'image/*';
+      camInput.capture = 'environment';
+      camInput.style.display = 'none';
+      wrapper.appendChild(camInput);
+
+      const camBtn = document.createElement('button');
+      camBtn.className = 'cfup-button-secondary';
+      camBtn.type = 'button';
+      camBtn.textContent = '📷 Camera';
+      camBtn.addEventListener('click', (e) => { e.stopPropagation(); camInput.click(); });
+      actions.appendChild(camBtn);
+
+      camInput.addEventListener('change', () => {
+        if (camInput.files?.length) handleFiles(Array.from(camInput.files));
+        camInput.value = '';
+      });
+    }
+
+    wrapper.appendChild(actions);
+
+    // Progress
+    const progressWrapper = document.createElement('div');
+    progressWrapper.style.display = 'none';
+    const track = document.createElement('div');
+    track.className = 'cfup-progress-bar-track';
+    const fill = document.createElement('div');
+    fill.className = 'cfup-progress-bar-fill';
+    const progressText = document.createElement('p');
+    progressText.className = 'cfup-progress-text';
+    track.appendChild(fill);
+    progressWrapper.className = 'cfup-progress-bar-wrapper';
+    progressWrapper.appendChild(track);
+    progressWrapper.appendChild(progressText);
+    wrapper.appendChild(progressWrapper);
+
+    // File list
+    const fileList = document.createElement('div');
+    fileList.className = 'cfup-file-list';
+    wrapper.appendChild(fileList);
+
+    // Error
+    const errorEl = document.createElement('div');
+    errorEl.className = 'cfup-error';
+    errorEl.style.display = 'none';
+    wrapper.appendChild(errorEl);
+
+    // Help text
+    if (field.helpText) {
+      const help = document.createElement('p');
+      help.className = 'cfup-help-text';
+      help.textContent = field.helpText;
+      wrapper.appendChild(help);
+    }
+
+    // ── Drag & drop ────────────────────────────────────────────────────────
+
+    dropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropzone.classList.add('cfup-dragover');
+    });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('cfup-dragover'));
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropzone.classList.remove('cfup-dragover');
+      handleFiles(Array.from(e.dataTransfer.files));
+    });
+
+    fileInput.addEventListener('change', () => {
+      handleFiles(Array.from(fileInput.files));
+      fileInput.value = '';
+    });
+
+    function showError(msg) {
+      errorEl.textContent = msg;
+      errorEl.style.display = 'block';
+      setTimeout(() => { errorEl.style.display = 'none'; }, 6000);
+    }
+
+    function handleFiles(files) {
+      errorEl.style.display = 'none';
+      if (uploadedFiles.length + files.length > (field.maxFiles || 1)) {
+        showError(`Maximum ${field.maxFiles} file(s) allowed`);
+        return;
+      }
+
+      files.forEach((file) => {
+        // If image editing is enabled, open editor first
+        if (field.enableCropping && file.type.startsWith('image/')) {
+          openEditor(file, (editedFile) => uploadFile(editedFile));
+        } else {
+          uploadFile(file);
+        }
+      });
+    }
+
+    async function uploadFile(file) {
+      // Client-side validation
+      const maxBytes = (field.maxFileSizeMb || 10) * 1024 * 1024;
+      if (file.size > maxBytes) {
+        showError(`${file.name} exceeds the ${field.maxFileSizeMb}MB limit`);
+        return;
+      }
+
+      const minBytes = (field.minFileSizeMb || 0) * 1024 * 1024;
+      if (minBytes && file.size < minBytes) {
+        showError(`${file.name} is too small (min ${field.minFileSizeMb}MB)`);
+        return;
+      }
+
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      if (field.allowedExtensions?.length && !field.allowedExtensions.includes(ext)) {
+        showError(`File type .${ext} is not allowed`);
+        return;
+      }
+
+      // Show progress
+      progressWrapper.style.display = 'block';
+      fill.style.width = '0%';
+      progressText.textContent = 'Uploading...';
+
+      const fileItem = createFileItem(file, 'uploading');
+      fileList.appendChild(fileItem);
+
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('shop', SHOP);
+        formData.append('productId', PRODUCT_ID);
+        const variantId = widget.dataset.variantId;
+        if (variantId) formData.append('variantId', variantId);
+        formData.append('uploadFieldId', field.id);
+        formData.append('cartToken', getCartToken());
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${API_URL}/storefront/upload`);
+
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 100);
+            fill.style.width = pct + '%';
+            progressText.textContent = `Uploading... ${pct}%`;
+          }
+        };
+
+        await new Promise((resolve, reject) => {
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              const res = JSON.parse(xhr.responseText);
+              uploadedFiles.push(res.data);
+              uploadedFileIds.push(res.data.id);
+              allUploadedIds.push(res.data.id);
+              updateFileItem(fileItem, 'success', '✓ Uploaded');
+              progressWrapper.style.display = 'none';
+              addRemoveButton(fileItem, res.data.id, uploadedFiles, uploadedFileIds);
+              persistUploadIds();
+              resolve(res);
+            } else {
+              try {
+                const err = JSON.parse(xhr.responseText);
+                reject(new Error(err.message || 'Upload failed'));
+              } catch {
+                reject(new Error('Upload failed'));
+              }
+            }
+          };
+          xhr.onerror = () => reject(new Error('Network error'));
+          xhr.send(formData);
+        });
+
+      } catch (err) {
+        updateFileItem(fileItem, 'error', '✗ Failed');
+        showError(err.message || 'Upload failed. Please try again.');
+        progressWrapper.style.display = 'none';
+      }
+    }
+
+    function addRemoveButton(item, uploadId, filesArr, idsArr) {
+      const btn = document.createElement('button');
+      btn.className = 'cfup-file-remove';
+      btn.textContent = '✕';
+      btn.title = 'Remove';
+      btn.addEventListener('click', async () => {
+        // Soft-delete on server
+        try {
+          const delUrl = new URL(`${API_URL}/storefront/upload/${uploadId}`);
+          delUrl.searchParams.set('merchantId', SHOP);
+          delUrl.searchParams.set('cartToken', getCartToken());
+          await fetch(delUrl.toString(), { method: 'DELETE' });
+        } catch { /* best-effort */ }
+        const idx = idsArr.indexOf(uploadId);
+        if (idx !== -1) { filesArr.splice(idx, 1); idsArr.splice(idx, 1); }
+        const globalIdx = allUploadedIds.indexOf(uploadId);
+        if (globalIdx !== -1) allUploadedIds.splice(globalIdx, 1);
+        item.remove();
+        persistUploadIds();
+      });
+      item.appendChild(btn);
+    }
+
+    return wrapper;
+  }
+
+  // ── File item helpers ─────────────────────────────────────────────────────
+
+  function createFileItem(file, status) {
+    const item = document.createElement('div');
+    item.className = 'cfup-file-item';
+
+    if (file.type.startsWith('image/')) {
+      const img = document.createElement('img');
+      img.className = 'cfup-file-preview';
+      img.src = URL.createObjectURL(file);
+      item.appendChild(img);
+    } else {
+      const icon = document.createElement('span');
+      icon.style.cssText = 'font-size:32px;flex-shrink:0';
+      icon.textContent = getFileIcon(file.type);
+      item.appendChild(icon);
+    }
+
+    const info = document.createElement('div');
+    info.className = 'cfup-file-info';
+    info.innerHTML = `
+      <div class="cfup-file-name">${escapeHtml(file.name)}</div>
+      <div class="cfup-file-size">${formatBytes(file.size)}</div>
+    `;
+    item.appendChild(info);
+
+    const statusEl = document.createElement('span');
+    statusEl.className = `cfup-file-status ${status}`;
+    statusEl.textContent = status === 'uploading' ? '⏳ Uploading...' : '';
+    item.appendChild(statusEl);
+    item._statusEl = statusEl;
+
+    return item;
+  }
+
+  function updateFileItem(item, status, text) {
+    item._statusEl.className = `cfup-file-status ${status}`;
+    item._statusEl.textContent = text;
+  }
+
+  function getFileIcon(mimeType) {
+    if (mimeType.includes('pdf')) return '📄';
+    if (mimeType.includes('video')) return '🎬';
+    if (mimeType.includes('zip')) return '🗜️';
+    if (mimeType.includes('word')) return '📝';
+    return '📎';
+  }
+
+  function escapeHtml(str) {
+    return str.replace(/[&<>"']/g, (m) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+  }
+
+  function formatBytes(b) {
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+    return (b / 1048576).toFixed(1) + ' MB';
+  }
+
+  // ── Cart persistence ──────────────────────────────────────────────────────
+
+  function getCartToken() {
+    const m = document.cookie.match(/cart=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : 'cart_' + Math.random().toString(36).substr(2, 9);
+  }
+
+  function persistUploadIds() {
+    if (!allUploadedIds.length) return;
+    fetch('/cart/update.js', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        attributes: {
+          '_cfup_upload_ids': allUploadedIds.join(','),
+          '_cfup_product_id': PRODUCT_ID,
+        },
+      }),
+    }).catch(() => {});
+  }
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+
+  loadFields();
+})();
+</script>
+
+{% schema %}
+{
+  "name": "File Upload Widget",
+  "target": "section",
+  "settings": [
+    {
+      "type": "url",
+      "id": "api_url",
+      "label": "App API URL",
+      "default": "https://filedrop-production-28dd.up.railway.app/api/v1"
+    },
+    {
+      "type": "color",
+      "id": "button_color",
+      "label": "Button Color",
+      "default": "#008060"
+    },
+    {
+      "type": "text",
+      "id": "button_text",
+      "label": "Button Text",
+      "default": "Upload File"
+    },
+    {
+      "type": "range",
+      "id": "border_radius",
+      "label": "Button Border Radius",
+      "min": 0,
+      "max": 24,
+      "step": 1,
+      "unit": "px",
+      "default": 4
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_camera",
+      "label": "Enable Camera Upload",
+      "default": true,
+      "info": "Shows a camera button for mobile photo capture"
+    }
+  ],
+  "presets": [
+    {
+      "name": "File Upload Widget"
+    }
+  ]
+}
+{% endschema %}

@@ -1,0 +1,61 @@
+{
+  "common": {
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "loading": "Cargando...",
+    "error": "Ocurrió un error",
+    "success": "Éxito",
+    "confirm": "Confirmar",
+    "back": "Volver",
+    "next": "Siguiente",
+    "required": "Requerido"
+  },
+  "upload": {
+    "button_text": "Subir archivo",
+    "drag_drop": "Arrastra y suelta archivos aquí, o haz clic para explorar",
+    "drag_drop_mobile": "Toca para seleccionar archivos",
+    "progress": "Subiendo... {{percent}}%",
+    "success": "Archivo subido exitosamente",
+    "error_size": "El archivo es demasiado grande. El tamaño máximo es {{max}}.",
+    "error_type": "Tipo de archivo no permitido. Tipos permitidos: {{types}}.",
+    "error_count": "Demasiados archivos. El máximo permitido es {{max}}.",
+    "error_width": "El ancho de la imagen debe estar entre {{min}}px y {{max}}px.",
+    "error_height": "La altura de la imagen debe estar entre {{min}}px y {{max}}px.",
+    "error_aspect": "La imagen debe tener una relación de aspecto {{ratio}}.",
+    "error_virus": "Este archivo no pudo ser aceptado por razones de seguridad.",
+    "preview": "Vista previa",
+    "remove": "Eliminar",
+    "uploading": "Subiendo",
+    "complete": "Completado",
+    "camera": "Tomar foto",
+    "browse": "Explorar archivos"
+  },
+  "dashboard": {
+    "title": "Panel de control",
+    "total_uploads": "Total de cargas",
+    "storage_used": "Almacenamiento usado",
+    "uploads_today": "Cargas hoy",
+    "uploads_month": "Cargas este mes",
+    "orders_with_uploads": "Pedidos con cargas",
+    "active_fields": "Campos de carga activos"
+  },
+  "billing": {
+    "title": "Plan y facturación",
+    "current_plan": "Plan actual",
+    "upgrade": "Actualizar",
+    "cancel": "Cancelar suscripción",
+    "trial_ends": "La prueba termina el {{date}}",
+    "monthly": "/mes",
+    "free": "Gratis"
+  },
+  "settings": {
+    "title": "Configuración",
+    "appearance": "Apariencia",
+    "language": "Idioma",
+    "notifications": "Notificaciones",
+    "messages": "Mensajes personalizados",
+    "security": "Seguridad"
+  }
+}
