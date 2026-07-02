@@ -1,13 +1,13 @@
 import axios from 'axios';
 
-// Hardcoded Railway backend URL - change if your Railway URL changes
-const BACKEND_URL = 'https://filedrop-production-28dd.up.railway.app/api/v1';
+// Backend URL - reads from environment variable set at build time
+// Falls back to the current Railway deployment URL
+const BACKEND_URL = (import.meta as any).env?.VITE_API_URL ||
+  'https://filedrop-production-6d21.up.railway.app/api/v1';
 
 function getApiUrl(): string {
   const win = window as any;
   if (win?.FILEDROP_CONFIG?.apiUrl) return win.FILEDROP_CONFIG.apiUrl;
-  const viteUrl = (import.meta as any).env?.VITE_API_URL;
-  if (viteUrl && !viteUrl.includes('localhost')) return viteUrl;
   return BACKEND_URL;
 }
 

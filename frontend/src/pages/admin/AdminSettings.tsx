@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const BACKEND = 'https://filedrop-production-28dd.up.railway.app/api/v1';
+const BACKEND = 'https://filedrop-production-6d21.up.railway.app/api/v1';
 
 export function AdminSettings() {
   const [settings, setSettings] = useState<any>({ appName: 'Custom File Upload Pro', supportEmail: '', defaultTrialDays: 14, maintenanceMode: false, allowNewRegistrations: true });

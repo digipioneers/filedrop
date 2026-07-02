@@ -14,5 +14,5 @@ export function getApiUrl(): string {
     return viteUrl;
   }
   // Hardcoded Railway backend URL - change this if your Railway URL changes
-  return 'https://filedrop-production-28dd.up.railway.app/api/v1';
+  return 'https://filedrop-production-6d21.up.railway.app/api/v1';
 }

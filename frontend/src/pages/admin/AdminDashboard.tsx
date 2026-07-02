@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const BACKEND = 'https://filedrop-production-28dd.up.railway.app/api/v1';
+const BACKEND = 'https://filedrop-production-6d21.up.railway.app/api/v1';
 
 function fmt(b: number) {
   if (b >= 1e9) return `${(b/1e9).toFixed(2)} GB`;
