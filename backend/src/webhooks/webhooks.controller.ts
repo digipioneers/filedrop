@@ -1,6 +1,6 @@
 import {
   Controller, Post, Headers, Body, Req,
-  UnauthorizedException, Logger, HttpCode,
+  BadRequestException, Logger, HttpCode,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthService } from '../auth/auth.service';
@@ -17,10 +17,10 @@ export class WebhooksController {
   ) {}
 
   private verifyWebhook(req: any, hmacHeader: string): void {
-    if (!req.rawBody) throw new UnauthorizedException('No raw body');
-    if (!hmacHeader) throw new UnauthorizedException('Missing HMAC header');
+    if (!req.rawBody) throw new BadRequestException('No raw body');
+    if (!hmacHeader) throw new BadRequestException('Missing HMAC header');
     const valid = this.authService.validateWebhookHmac(req.rawBody, hmacHeader);
-    if (!valid) throw new UnauthorizedException('Invalid webhook HMAC');
+    if (!valid) throw new BadRequestException('Invalid webhook HMAC');
   }
 
   @Post('app/uninstalled')

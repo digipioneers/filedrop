@@ -23,16 +23,8 @@ api_version = "2024-01"
   uri = "/api/v1/webhooks/orders/create"
 
   [[webhooks.subscriptions]]
-  topics = [ "customers/data_request" ]
-  uri = "/api/v1/gdpr/customers/data_request"
-
-  [[webhooks.subscriptions]]
-  topics = [ "customers/redact" ]
-  uri = "/api/v1/gdpr/customers/redact"
-
-  [[webhooks.subscriptions]]
-  topics = [ "shop/redact" ]
-  uri = "/api/v1/gdpr/shop/redact"
+  compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+  uri = "/api/v1/gdpr/webhooks"
 
 [build]
 automatically_update_urls_on_dev = true

@@ -1,6 +1,6 @@
 import {
   Controller, Post, Headers, Body, Req,
-  HttpCode, HttpStatus, Logger, UnauthorizedException,
+  HttpCode, HttpStatus, Logger, BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -30,22 +30,22 @@ export class GdprController {
   ) {}
 
   /**
-   * Verify Shopify webhook HMAC signature.
-   * Shopify signs every webhook with HMAC-SHA256 using the app's API secret.
-   * Rejecting requests without a valid signature is a mandatory App Store requirement.
+   * Verify Shopify webhook HMAC.
+   * MUST throw 400 (not 401) — Shopify's automated checker specifically
+   * tests for HTTP 400 on invalid signatures.
    */
   private verifyHmac(req: any, hmacHeader: string): void {
     if (!hmacHeader) {
-      throw new UnauthorizedException('Missing X-Shopify-Hmac-Sha256 header');
+      throw new BadRequestException('Missing X-Shopify-Hmac-Sha256 header');
     }
     const rawBody: Buffer = req.rawBody;
     if (!rawBody) {
-      throw new UnauthorizedException('No raw body available for HMAC verification');
+      throw new BadRequestException('No raw body for HMAC verification');
     }
     const secret = this.configService.get<string>('SHOPIFY_API_SECRET');
     if (!secret) {
       this.logger.error('SHOPIFY_API_SECRET is not configured');
-      throw new UnauthorizedException('Server misconfiguration');
+      throw new BadRequestException('Server misconfiguration');
     }
     const computed = crypto
       .createHmac('sha256', secret)
@@ -59,94 +59,113 @@ export class GdprController {
       hmacBuf.length !== computedBuf.length ||
       !crypto.timingSafeEqual(computedBuf, hmacBuf)
     ) {
-      this.logger.warn('GDPR webhook HMAC verification failed');
-      throw new UnauthorizedException('Invalid HMAC signature');
+      this.logger.warn('GDPR HMAC verification failed');
+      throw new BadRequestException('Invalid HMAC signature');
     }
   }
 
   /**
-   * customers/data_request
-   * Shopify calls this when a customer requests their data.
-   * We must respond 200 within 48 hours and send the data to the customer.
-   * For now we acknowledge receipt and log — a real implementation would
-   * email the merchant with the customer's upload records.
+   * Unified GDPR compliance webhook endpoint.
+   * All three mandatory topics route here — Shopify sends
+   * X-Shopify-Topic header to identify which action is needed.
+   * Registered in shopify.app.toml via compliance_topics.
+   */
+  @Post('webhooks')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Unified GDPR compliance webhook (mandatory)' })
+  async handleGdprWebhook(
+    @Req() req: any,
+    @Headers('x-shopify-hmac-sha256') hmac: string,
+    @Headers('x-shopify-topic') topic: string,
+    @Headers('x-shopify-shop-domain') shopDomain: string,
+    @Body() body: any,
+  ) {
+    this.verifyHmac(req, hmac);
+
+    this.logger.log(`GDPR webhook received — topic: ${topic}, shop: ${shopDomain}`);
+
+    switch (topic) {
+      case 'customers/data_request':
+        return this.handleCustomerDataRequest(shopDomain, body);
+      case 'customers/redact':
+        return this.handleCustomerRedact(shopDomain, body);
+      case 'shop/redact':
+        return this.handleShopRedact(shopDomain);
+      default:
+        this.logger.warn(`Unknown GDPR topic: ${topic}`);
+        return { acknowledged: true };
+    }
+  }
+
+  /**
+   * Keep individual endpoints too so existing webhook registrations
+   * (pre-toml) still work and don't break.
    */
   @Post('customers/data_request')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Customer data request (GDPR) — Shopify mandatory webhook' })
   async customerDataRequest(
     @Req() req: any,
     @Headers('x-shopify-hmac-sha256') hmac: string,
+    @Headers('x-shopify-shop-domain') shopDomain: string,
     @Body() body: any,
   ) {
     this.verifyHmac(req, hmac);
-    const { shop_domain, customer } = body;
-    this.logger.log(
-      `GDPR data_request — shop: ${shop_domain}, customer: ${customer?.email || customer?.id}`,
-    );
-    // TODO: email the merchant at shop_domain with all upload records for this customer
-    return { acknowledged: true };
+    return this.handleCustomerDataRequest(shopDomain, body);
   }
 
-  /**
-   * customers/redact
-   * Shopify calls this 10 days after a customer requests deletion.
-   * We must delete all personal data we hold for this customer.
-   */
   @Post('customers/redact')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Customer data redaction (GDPR) — Shopify mandatory webhook' })
   async customerRedact(
     @Req() req: any,
     @Headers('x-shopify-hmac-sha256') hmac: string,
+    @Headers('x-shopify-shop-domain') shopDomain: string,
     @Body() body: any,
   ) {
     this.verifyHmac(req, hmac);
-    const { shop_domain, customer } = body;
-    this.logger.log(
-      `GDPR customers/redact — shop: ${shop_domain}, customer: ${customer?.email || customer?.id}`,
-    );
-
-    const merchant = await this.merchantRepo.findOne({ where: { shopDomain: shop_domain } });
-    if (merchant && customer?.email) {
-      await this.uploadRepo.delete({
-        merchantId: merchant.id,
-        customerEmail: customer.email,
-      });
-    }
-
-    return { acknowledged: true };
+    return this.handleCustomerRedact(shopDomain, body);
   }
 
-  /**
-   * shop/redact
-   * Shopify calls this 48 hours after a merchant uninstalls the app.
-   * We must delete ALL data we hold for this shop.
-   */
   @Post('shop/redact')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Shop data redaction (GDPR) — Shopify mandatory webhook' })
   async shopRedact(
     @Req() req: any,
     @Headers('x-shopify-hmac-sha256') hmac: string,
+    @Headers('x-shopify-shop-domain') shopDomain: string,
     @Body() body: any,
   ) {
     this.verifyHmac(req, hmac);
-    const { shop_domain } = body;
-    this.logger.log(`GDPR shop/redact — shop: ${shop_domain}`);
+    return this.handleShopRedact(shopDomain);
+  }
 
-    const merchant = await this.merchantRepo.findOne({ where: { shopDomain: shop_domain } });
-    if (!merchant) {
-      return { acknowledged: true, note: 'shop not found — already deleted' };
+  // ── Private handlers ──────────────────────────────────────────────────────
+
+  private async handleCustomerDataRequest(shopDomain: string, body: any) {
+    const customer = body?.customer;
+    this.logger.log(`data_request — shop: ${shopDomain}, customer: ${customer?.email || customer?.id}`);
+    // TODO: email merchant with customer's upload records
+    return { acknowledged: true };
+  }
+
+  private async handleCustomerRedact(shopDomain: string, body: any) {
+    const customer = body?.customer;
+    this.logger.log(`customers/redact — shop: ${shopDomain}, customer: ${customer?.email}`);
+    const merchant = await this.merchantRepo.findOne({ where: { shopDomain } });
+    if (merchant && customer?.email) {
+      await this.uploadRepo.delete({ merchantId: merchant.id, customerEmail: customer.email });
     }
+    return { acknowledged: true };
+  }
 
-    // Delete in dependency order to respect foreign-key constraints
+  private async handleShopRedact(shopDomain: string) {
+    this.logger.log(`shop/redact — shop: ${shopDomain}`);
+    const merchant = await this.merchantRepo.findOne({ where: { shopDomain } });
+    if (!merchant) return { acknowledged: true, note: 'shop not found — already deleted' };
+
     await this.uploadRepo.delete({ merchantId: merchant.id });
     await this.settingsRepo.delete({ merchantId: merchant.id });
     await this.subRepo.delete({ merchantId: merchant.id });
     await this.merchantRepo.delete({ id: merchant.id });
-
-    this.logger.log(`GDPR shop/redact — deleted all data for ${shop_domain}`);
+    this.logger.log(`shop/redact complete — deleted all data for ${shopDomain}`);
     return { acknowledged: true };
   }
 }
