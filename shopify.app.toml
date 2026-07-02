@@ -22,6 +22,18 @@ api_version = "2024-01"
   topics = [ "orders/create" ]
   uri = "/api/v1/webhooks/orders/create"
 
+  [[webhooks.subscriptions]]
+  topics = [ "customers/data_request" ]
+  uri = "/api/v1/gdpr/customers/data_request"
+
+  [[webhooks.subscriptions]]
+  topics = [ "customers/redact" ]
+  uri = "/api/v1/gdpr/customers/redact"
+
+  [[webhooks.subscriptions]]
+  topics = [ "shop/redact" ]
+  uri = "/api/v1/gdpr/shop/redact"
+
 [build]
 automatically_update_urls_on_dev = true
 dev_store_url = "filedrop-practice.myshopify.com"

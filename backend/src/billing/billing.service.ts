@@ -116,11 +116,21 @@ export class BillingService {
             'X-Shopify-Access-Token': merchant.accessToken,
             'Content-Type': 'application/json',
           },
+          timeout: 15_000,
         },
       );
     } catch (err: any) {
-      this.logger.error(`Shopify appSubscriptionCreate request failed: ${err?.message}`);
-      throw new BadRequestException('Could not start checkout with Shopify. Please try again.');
+      this.logger.error(
+        `Shopify appSubscriptionCreate request failed for shop "${merchant.shopDomain}": ${err?.message}`,
+      );
+      if (err?.code === 'ECONNABORTED' || err?.message?.includes('timeout')) {
+        throw new BadRequestException(
+          `Request to Shopify timed out. Is "${merchant.shopDomain}" a real, reachable Shopify store?`,
+        );
+      }
+      throw new BadRequestException(
+        `Could not reach Shopify for store "${merchant.shopDomain}": ${err?.message || 'unknown error'}`,
+      );
     }
 
     const result = response.data?.data?.appSubscriptionCreate;
