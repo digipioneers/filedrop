@@ -65,7 +65,9 @@ export class AuthController {
     try {
       merchant = await this.authService.installMerchant(shop, accessToken);
     } catch (err: any) {
-      if (err?.status === 403 || err?.response?.statusCode === 403) {
+      // NestJS HttpExceptions use getStatus(), not .status
+      const statusCode = typeof err?.getStatus === 'function' ? err.getStatus() : (err?.status || err?.statusCode);
+      if (statusCode === 403) {
         const frontendUrl = this.configService.get('FRONTEND_URL', 'http://localhost:5173');
         return res.redirect(`${frontendUrl}/install-disabled`);
       }

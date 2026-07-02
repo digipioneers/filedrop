@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, ForbiddenException, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
@@ -110,16 +110,6 @@ export class AuthService {
   async installMerchant(shop: string, accessToken: string): Promise<Merchant> {
     let merchant = await this.merchantRepo.findOne({ where: { shopDomain: shop } });
     const isNewMerchant = !merchant;
-
-    if (isNewMerchant) {
-      const appSettings = await this.appSettingsRepo.findOne({ where: {} });
-      if (appSettings && appSettings.allowNewRegistrations === false) {
-        this.logger.warn(`Blocked new registration (registrations disabled): ${shop}`);
-        throw new ForbiddenException(
-          'New installations are temporarily disabled. Please try again later.',
-        );
-      }
-    }
 
     const shopInfo = await this.fetchShopInfo(shop, accessToken);
 
