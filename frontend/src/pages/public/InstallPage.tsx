@@ -5,7 +5,7 @@ interface InstallPageProps {
 }
 
 export function InstallPage({ shopifyApiKey }: InstallPageProps) {
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+  const apiUrl = import.meta.env.VITE_API_URL || '/api/v1';
 
   const handleInstall = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();

@@ -1,5 +1,7 @@
-// Runtime configuration - can be updated without rebuilding
-// This file is served as-is and loaded before React
+// Runtime configuration - update this file with your Railway URLs
+// This file is served as-is and loaded before React starts
+// Set VITE_API_URL in Railway frontend Variables for build-time config,
+// OR update the apiUrl below for runtime config (no rebuild needed)
 window.FILEDROP_CONFIG = {
-  apiUrl: 'https://filedrop-production-28dd.up.railway.app/api/v1',
+  apiUrl: '', // Leave empty to use VITE_API_URL env var set in Railway Variables
 };

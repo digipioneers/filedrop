@@ -29,7 +29,11 @@ export class WebhooksService {
    * Called automatically from AuthService.installMerchant().
    */
   async registerWebhooksForMerchant(merchant: Merchant): Promise<void> {
-    const appUrl = this.configService.get<string>('APP_URL', 'https://filedrop-production-6d21.up.railway.app');
+    const appUrl = this.configService.get<string>('APP_URL');
+    if (!appUrl) {
+      this.logger.error('APP_URL environment variable is not set — cannot register webhooks');
+      return;
+    }
 
     const webhooks = [
       { topic: 'app/uninstalled',        address: `${appUrl}/api/v1/webhooks/app/uninstalled` },
