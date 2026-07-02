@@ -10,6 +10,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { Merchant } from './entities/merchant.entity';
 import { AppSettings } from '../admin/entities/app-settings.entity';
 import { BillingModule } from '../billing/billing.module';
+import { WebhooksModule } from '../webhooks/webhooks.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { BillingModule } from '../billing/billing.module';
     }),
     HttpModule,
     BillingModule,
+    WebhooksModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],

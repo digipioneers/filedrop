@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { Upload } from '../uploads/entities/upload.entity';
 import { Merchant } from '../auth/entities/merchant.entity';
@@ -18,7 +19,55 @@ export class WebhooksService {
     private readonly merchantRepo: Repository<Merchant>,
     private readonly notificationsService: NotificationsService,
     private readonly productsService: ProductsService,
+    private readonly configService: ConfigService,
   ) {}
+
+  /**
+   * Register all required webhooks for a merchant immediately after install.
+   * This is the ONLY reliable way to pass Shopify's automated compliance checks
+   * without running `shopify app deploy` from the CLI.
+   * Called automatically from AuthService.installMerchant().
+   */
+  async registerWebhooksForMerchant(merchant: Merchant): Promise<void> {
+    const appUrl = this.configService.get<string>('APP_URL', 'https://filedrop-production-6d21.up.railway.app');
+
+    const webhooks = [
+      { topic: 'app/uninstalled',        address: `${appUrl}/api/v1/webhooks/app/uninstalled` },
+      { topic: 'orders/create',          address: `${appUrl}/api/v1/webhooks/orders/create` },
+      { topic: 'orders/updated',         address: `${appUrl}/api/v1/webhooks/orders/updated` },
+      { topic: 'products/update',        address: `${appUrl}/api/v1/webhooks/products/update` },
+      // GDPR mandatory compliance webhooks — all route to unified endpoint
+      { topic: 'customers/data_request', address: `${appUrl}/api/v1/gdpr/webhooks` },
+      { topic: 'customers/redact',       address: `${appUrl}/api/v1/gdpr/webhooks` },
+      { topic: 'shop/redact',            address: `${appUrl}/api/v1/gdpr/webhooks` },
+    ];
+
+    for (const webhook of webhooks) {
+      try {
+        const res = await axios.post(
+          `https://${merchant.shopDomain}/admin/api/2024-01/webhooks.json`,
+          { webhook: { topic: webhook.topic, address: webhook.address, format: 'json' } },
+          {
+            headers: {
+              'X-Shopify-Access-Token': merchant.accessToken,
+              'Content-Type': 'application/json',
+            },
+            timeout: 10_000,
+          },
+        );
+        if (res.status === 201) {
+          this.logger.log(`✅ Webhook registered: ${webhook.topic} → ${webhook.address}`);
+        }
+      } catch (err: any) {
+        // 422 = already exists — that's fine
+        if (err?.response?.status === 422) {
+          this.logger.log(`⏭  Webhook already registered: ${webhook.topic}`);
+        } else {
+          this.logger.error(`❌ Failed to register webhook ${webhook.topic}: ${err?.message}`);
+        }
+      }
+    }
+  }
 
   /**
    * When an order is created: associate uploads, add timeline note, notify merchant.

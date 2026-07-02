@@ -8,6 +8,7 @@ import axios from 'axios';
 import { Merchant } from './entities/merchant.entity';
 import { AppSettings } from '../admin/entities/app-settings.entity';
 import { BillingService } from '../billing/billing.service';
+import { WebhooksService } from '../webhooks/webhooks.service';
 
 @Injectable()
 export class AuthService {
@@ -19,6 +20,7 @@ export class AuthService {
     @InjectRepository(AppSettings)
     private readonly appSettingsRepo: Repository<AppSettings>,
     private readonly billingService: BillingService,
+    private readonly webhooksService: WebhooksService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
   ) {}
@@ -149,10 +151,18 @@ export class AuthService {
       try {
         await this.billingService.activateFreePlan(saved.id);
       } catch (err: any) {
-        // Don't fail the install if this step has a problem — the rest of
-        // the app already falls back to Free behavior with no row present.
         this.logger.error(`Failed to activate default Free plan for ${shop}: ${err?.message}`);
       }
+    }
+
+    // Register all required webhooks including GDPR compliance webhooks
+    // every time a merchant installs or reinstalls. This is what makes
+    // Shopify's automated checks pass — they verify Shopify's webhook
+    // registry, not just our endpoint code.
+    try {
+      await this.webhooksService.registerWebhooksForMerchant(saved);
+    } catch (err: any) {
+      this.logger.error(`Failed to register webhooks for ${shop}: ${err?.message}`);
     }
 
     return saved;

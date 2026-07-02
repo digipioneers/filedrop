@@ -3,8 +3,12 @@ import {
   BadRequestException, Logger, HttpCode,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { AuthService } from '../auth/auth.service';
+import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import * as crypto from 'crypto';
 import { WebhooksService } from './webhooks.service';
+import { Merchant } from '../auth/entities/merchant.entity';
 
 @ApiTags('webhooks')
 @Controller('webhooks')
@@ -12,15 +16,22 @@ export class WebhooksController {
   private readonly logger = new Logger(WebhooksController.name);
 
   constructor(
-    private readonly authService: AuthService,
     private readonly webhooksService: WebhooksService,
+    private readonly configService: ConfigService,
+    @InjectRepository(Merchant)
+    private readonly merchantRepo: Repository<Merchant>,
   ) {}
 
   private verifyWebhook(req: any, hmacHeader: string): void {
     if (!req.rawBody) throw new BadRequestException('No raw body');
     if (!hmacHeader) throw new BadRequestException('Missing HMAC header');
-    const valid = this.authService.validateWebhookHmac(req.rawBody, hmacHeader);
-    if (!valid) throw new BadRequestException('Invalid webhook HMAC');
+    const secret = this.configService.get<string>('SHOPIFY_API_SECRET');
+    const computed = crypto.createHmac('sha256', secret).update(req.rawBody).digest('base64');
+    const hmacBuf = Buffer.from(hmacHeader);
+    const computedBuf = Buffer.from(computed);
+    if (hmacBuf.length !== computedBuf.length || !crypto.timingSafeEqual(computedBuf, hmacBuf)) {
+      throw new BadRequestException('Invalid webhook HMAC');
+    }
   }
 
   @Post('app/uninstalled')
@@ -33,7 +44,7 @@ export class WebhooksController {
   ) {
     this.verifyWebhook(req, hmac);
     this.logger.log(`App uninstalled for shop: ${shop}`);
-    await this.authService.uninstallMerchant(shop);
+    await this.merchantRepo.update({ shopDomain: shop }, { isActive: false, uninstalledAt: new Date() });
     return { ok: true };
   }
 
