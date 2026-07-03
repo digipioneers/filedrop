@@ -58,7 +58,7 @@ export class AuthController {
     }
 
     // Exchange code for access token
-    const { accessToken, expiresIn } = await this.authService.exchangeCodeForToken(shop, code);
+    const accessToken = await this.authService.exchangeCodeForToken(shop, code);
 
     // Install/update merchant
     let merchant;
@@ -73,9 +73,8 @@ export class AuthController {
       throw err;
     }
 
-    // Generate JWT — expire it when the Shopify online token expires (or 24h default)
-    const jwtExpiresIn = expiresIn ? `${expiresIn}s` : '24h';
-    const token = this.authService.signToken(merchant, jwtExpiresIn);
+    // Generate JWT with long expiry for offline token sessions
+    const token = this.authService.signToken(merchant);
 
     const appUrl = this.configService.get('APP_URL');
     // Redirect to embedded app with token

@@ -33,12 +33,9 @@ export class AuthService {
     const scopes = this.configService.get('SHOPIFY_SCOPES');
     const redirectUri = `${this.configService.get('APP_URL')}/api/v1/auth/callback`;
 
-    // grant_type=per-user gives online (session-based) tokens required for
-    // embedded apps. Offline tokens are deprecated and cause "Session expired"
-    // errors in the Shopify admin iframe.
     return (
       `https://${shop}/admin/oauth/authorize?` +
-      `client_id=${apiKey}&scope=${scopes}&redirect_uri=${redirectUri}&state=${state}&grant_type=per-user`
+      `client_id=${apiKey}&scope=${scopes}&redirect_uri=${redirectUri}&state=${state}`
     );
   }
 
@@ -79,11 +76,7 @@ export class AuthService {
     );
   }
 
-  /**
-   * Exchange OAuth code for access token.
-   * With online (per-user) tokens, Shopify returns expires_in and associated_user.
-   */
-  async exchangeCodeForToken(shop: string, code: string): Promise<{ accessToken: string; expiresIn?: number }> {
+  async exchangeCodeForToken(shop: string, code: string): Promise<string> {
     const apiKey = this.configService.get('SHOPIFY_API_KEY');
     const apiSecret = this.configService.get('SHOPIFY_API_SECRET');
 
@@ -92,10 +85,7 @@ export class AuthService {
       { client_id: apiKey, client_secret: apiSecret, code },
     );
 
-    return {
-      accessToken: response.data.access_token,
-      expiresIn: response.data.expires_in, // present for online tokens
-    };
+    return response.data.access_token;
   }
 
   /**
@@ -168,11 +158,11 @@ export class AuthService {
   /**
    * Sign a JWT for the merchant session.
    */
-  signToken(merchant: Merchant, expiresIn?: string): string {
-    return this.jwtService.sign(
-      { sub: merchant.id, shop: merchant.shopDomain },
-      expiresIn ? { expiresIn } : undefined,
-    );
+  signToken(merchant: Merchant): string {
+    return this.jwtService.sign({
+      sub: merchant.id,
+      shop: merchant.shopDomain,
+    });
   }
 
   /**

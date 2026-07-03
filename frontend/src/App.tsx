@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useSearchParams } from 'react-router-dom';
 import { AppProvider } from '@shopify/polaris';
 import enTranslations from '@shopify/polaris/locales/en.json';
+import { Provider as AppBridgeProvider } from '@shopify/app-bridge-react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Merchant pages
@@ -32,12 +33,14 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
 });
 
+const SHOPIFY_API_KEY = (import.meta as any).env?.VITE_SHOPIFY_API_KEY || '';
+
 function TokenHandler({ children }: { children: React.ReactNode }) {
   const [params] = useSearchParams();
   useEffect(() => {
     const token = params.get('token');
     const shop = params.get('shop');
-    const host = params.get('host'); // Shopify passes this in embedded context
+    const host = params.get('host');
 
     if (token) {
       localStorage.setItem('cfup_token', token);
@@ -45,14 +48,12 @@ function TokenHandler({ children }: { children: React.ReactNode }) {
       window.history.replaceState({}, '', window.location.pathname);
     }
 
-    // Store shop from host param (base64 encoded shop domain)
-    if (host && !shop) {
+    if (host) {
+      localStorage.setItem('cfup_host', host);
       try {
         const decoded = atob(host);
         const match = decoded.match(/([^/]+\.myshopify\.com)/);
-        if (match && match[1]) {
-          localStorage.setItem('cfup_shop', match[1]);
-        }
+        if (match?.[1]) localStorage.setItem('cfup_shop', match[1]);
       } catch {}
     }
 
@@ -67,44 +68,80 @@ function AdminRoute() {
   return <AdminLayout />;
 }
 
+function AppWithBridge() {
+  const [params] = useSearchParams();
+  const host = params.get('host') || localStorage.getItem('cfup_host') || '';
+  const shop = params.get('shop') || localStorage.getItem('cfup_shop') || '';
+
+  // If we have a host param, use App Bridge for embedded context
+  if (host && SHOPIFY_API_KEY) {
+    const config = {
+      apiKey: SHOPIFY_API_KEY,
+      host,
+      forceRedirect: true,
+    };
+
+    return (
+      <AppBridgeProvider config={config}>
+        <AppProvider i18n={enTranslations}>
+          <TokenHandler>
+            <AppRoutes />
+          </TokenHandler>
+        </AppProvider>
+      </AppBridgeProvider>
+    );
+  }
+
+  // No host param — render without App Bridge (direct URL access, admin panel)
+  return (
+    <AppProvider i18n={enTranslations}>
+      <TokenHandler>
+        <AppRoutes />
+      </TokenHandler>
+    </AppProvider>
+  );
+}
+
+function AppRoutes() {
+  return (
+    <Routes>
+      {/* Merchant app */}
+      <Route path="/app" element={<AppLayout />}>
+        <Route index element={<DashboardPage />} />
+        <Route path="fields" element={<UploadFieldsPage />} />
+        <Route path="fields/new" element={<UploadFieldFormPage />} />
+        <Route path="fields/:id/edit" element={<UploadFieldFormPage />} />
+        <Route path="uploads" element={<UploadsPage />} />
+        <Route path="orders" element={<OrdersPage />} />
+        <Route path="analytics" element={<AnalyticsPage />} />
+        <Route path="billing" element={<BillingPage />} />
+        <Route path="settings" element={<SettingsPage />} />
+      </Route>
+
+      {/* Admin panel */}
+      <Route path="/admin" element={<AdminRoute />}>
+        <Route index element={<AdminDashboard />} />
+        <Route path="plans" element={<AdminPlans />} />
+        <Route path="merchants" element={<AdminMerchants />} />
+        <Route path="uploads" element={<AdminUploads />} />
+        <Route path="settings" element={<AdminSettings />} />
+      </Route>
+
+      {/* Public */}
+      <Route path="/install-disabled" element={<InstallDisabledPage />} />
+      <Route path="/install-expired" element={<SessionExpiredPage />} />
+
+      <Route path="*" element={<Navigate to="/app" replace />} />
+    </Routes>
+  );
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AppProvider i18n={enTranslations}>
-        <BrowserRouter>
-          <TokenHandler>
-            <Routes>
-              {/* Merchant app */}
-              <Route path="/app" element={<AppLayout />}>
-                <Route index element={<DashboardPage />} />
-                <Route path="fields" element={<UploadFieldsPage />} />
-                <Route path="fields/new" element={<UploadFieldFormPage />} />
-                <Route path="fields/:id/edit" element={<UploadFieldFormPage />} />
-                <Route path="uploads" element={<UploadsPage />} />
-                <Route path="orders" element={<OrdersPage />} />
-                <Route path="analytics" element={<AnalyticsPage />} />
-                <Route path="billing" element={<BillingPage />} />
-                <Route path="settings" element={<SettingsPage />} />
-              </Route>
-
-              {/* Admin panel */}
-              <Route path="/admin" element={<AdminRoute />}>
-                <Route index element={<AdminDashboard />} />
-                <Route path="plans" element={<AdminPlans />} />
-                <Route path="merchants" element={<AdminMerchants />} />
-                <Route path="uploads" element={<AdminUploads />} />
-                <Route path="settings" element={<AdminSettings />} />
-              </Route>
-
-              {/* Public */}
-              <Route path="/install-disabled" element={<InstallDisabledPage />} />
-              <Route path="/install-expired" element={<SessionExpiredPage />} />
-
-              <Route path="*" element={<Navigate to="/app" replace />} />
-            </Routes>
-          </TokenHandler>
-        </BrowserRouter>
-      </AppProvider>
+      <BrowserRouter>
+        <AppWithBridge />
+      </BrowserRouter>
     </QueryClientProvider>
   );
 }
