@@ -109,7 +109,7 @@ export class BillingService {
     let response;
     try {
       response = await axios.post(
-        `https://${merchant.shopDomain}/admin/api/2024-01/graphql.json`,
+        `https://${merchant.shopDomain}/admin/api/2026-07/graphql.json`,
         { query: mutation, variables },
         {
           headers: {
@@ -200,7 +200,7 @@ export class BillingService {
     let response;
     try {
       response = await axios.post(
-        `https://${merchant.shopDomain}/admin/api/2024-01/graphql.json`,
+        `https://${merchant.shopDomain}/admin/api/2026-07/graphql.json`,
         { query },
         {
           headers: {

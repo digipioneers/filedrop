@@ -22,7 +22,7 @@ export class ProductsService {
     if (!merchant) return { synced: 0 };
 
     let synced = 0;
-    let url = `https://${merchant.shopDomain}/admin/api/2024-01/products.json?limit=250&fields=id,title,handle,product_type,tags,variants,image,collections`;
+    let url = `https://${merchant.shopDomain}/admin/api/2026-07/products.json?limit=250&fields=id,title,handle,product_type,tags,variants,image,collections`;
 
     while (url) {
       const res = await axios.get(url, {
@@ -86,11 +86,11 @@ export class ProductsService {
 
     try {
       const res = await axios.get(
-        `https://${merchant.shopDomain}/admin/api/2024-01/custom_collections.json?limit=250`,
+        `https://${merchant.shopDomain}/admin/api/2026-07/custom_collections.json?limit=250`,
         { headers: { 'X-Shopify-Access-Token': merchant.accessToken } },
       );
       const smart = await axios.get(
-        `https://${merchant.shopDomain}/admin/api/2024-01/smart_collections.json?limit=250`,
+        `https://${merchant.shopDomain}/admin/api/2026-07/smart_collections.json?limit=250`,
         { headers: { 'X-Shopify-Access-Token': merchant.accessToken } },
       );
       return [
@@ -139,14 +139,14 @@ export class ProductsService {
   ): Promise<{ id: string; title: string; handle: string }[]> {
     try {
       const res = await axios.get(
-        `https://${shopDomain}/admin/api/2024-01/collects.json?product_id=${productId}`,
+        `https://${shopDomain}/admin/api/2026-07/collects.json?product_id=${productId}`,
         { headers: { 'X-Shopify-Access-Token': accessToken } },
       );
       const collects: any[] = res.data.collects ?? [];
       const collections = await Promise.all(
         collects.slice(0, 5).map(async (c: any) => {
           const cr = await axios
-            .get(`https://${shopDomain}/admin/api/2024-01/custom_collections/${c.collection_id}.json`, {
+            .get(`https://${shopDomain}/admin/api/2026-07/custom_collections/${c.collection_id}.json`, {
               headers: { 'X-Shopify-Access-Token': accessToken },
             })
             .catch(() => null);

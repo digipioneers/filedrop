@@ -49,7 +49,7 @@ export class WebhooksService {
     for (const webhook of webhooks) {
       try {
         const res = await axios.post(
-          `https://${merchant.shopDomain}/admin/api/2024-01/webhooks.json`,
+          `https://${merchant.shopDomain}/admin/api/2026-07/webhooks.json`,
           { webhook: { topic: webhook.topic, address: webhook.address, format: 'json' } },
           {
             headers: {
@@ -138,7 +138,7 @@ export class WebhooksService {
     try {
       const note = `Customer uploaded ${uploadCount} file${uploadCount > 1 ? 's' : ''} via Custom File Upload Pro.`;
       await axios.post(
-        `https://${merchant.shopDomain}/admin/api/2024-01/orders/${shopifyOrderId}/metafields.json`,
+        `https://${merchant.shopDomain}/admin/api/2026-07/orders/${shopifyOrderId}/metafields.json`,
         {
           metafield: {
             namespace: 'custom_file_upload_pro',
@@ -157,7 +157,7 @@ export class WebhooksService {
 
       // Also write to order notes via order update
       const orderRes = await axios.get(
-        `https://${merchant.shopDomain}/admin/api/2024-01/orders/${shopifyOrderId}.json?fields=note`,
+        `https://${merchant.shopDomain}/admin/api/2026-07/orders/${shopifyOrderId}.json?fields=note`,
         { headers: { 'X-Shopify-Access-Token': merchant.accessToken } },
       );
       const existingNote = orderRes.data?.order?.note ?? '';
@@ -166,7 +166,7 @@ export class WebhooksService {
         : note;
 
       await axios.put(
-        `https://${merchant.shopDomain}/admin/api/2024-01/orders/${shopifyOrderId}.json`,
+        `https://${merchant.shopDomain}/admin/api/2026-07/orders/${shopifyOrderId}.json`,
         { order: { id: shopifyOrderId, note: updatedNote } },
         {
           headers: {

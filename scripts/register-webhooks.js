@@ -17,7 +17,7 @@
 const https = require('https');
 
 const APP_URL = process.env.APP_URL || 'https://filedrop-production-28dd.up.railway.app';
-const SHOPIFY_API_VERSION = '2024-01';
+const SHOPIFY_API_VERSION = '2026-07';
 
 const WEBHOOKS = [
   // Core app webhooks

@@ -96,7 +96,7 @@ export class AuthService {
    */
   async fetchShopInfo(shop: string, accessToken: string) {
     const response = await axios.get(
-      `https://${shop}/admin/api/2024-01/shop.json`,
+      `https://${shop}/admin/api/2026-07/shop.json`,
       { headers: { 'X-Shopify-Access-Token': accessToken } },
     );
     return response.data.shop;
