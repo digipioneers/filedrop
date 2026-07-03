@@ -26,6 +26,7 @@ import { AdminUploads } from './pages/admin/AdminUploads';
 
 // Public pages
 import { InstallDisabledPage } from './pages/public/InstallDisabledPage';
+import { SessionExpiredPage } from './pages/public/SessionExpiredPage';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
@@ -36,11 +37,26 @@ function TokenHandler({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const token = params.get('token');
     const shop = params.get('shop');
+    const host = params.get('host'); // Shopify passes this in embedded context
+
     if (token) {
       localStorage.setItem('cfup_token', token);
       if (shop) localStorage.setItem('cfup_shop', shop);
       window.history.replaceState({}, '', window.location.pathname);
     }
+
+    // Store shop from host param (base64 encoded shop domain)
+    if (host && !shop) {
+      try {
+        const decoded = atob(host);
+        const match = decoded.match(/([^/]+\.myshopify\.com)/);
+        if (match && match[1]) {
+          localStorage.setItem('cfup_shop', match[1]);
+        }
+      } catch {}
+    }
+
+    if (shop) localStorage.setItem('cfup_shop', shop);
   }, [params]);
   return <>{children}</>;
 }
@@ -82,6 +98,7 @@ export default function App() {
 
               {/* Public */}
               <Route path="/install-disabled" element={<InstallDisabledPage />} />
+              <Route path="/install-expired" element={<SessionExpiredPage />} />
 
               <Route path="*" element={<Navigate to="/app" replace />} />
             </Routes>

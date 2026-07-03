@@ -16,18 +16,37 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      const shop = localStorage.getItem('cfup_shop') ||
-        new URLSearchParams(window.location.search).get('shop');
+      localStorage.removeItem('cfup_token');
+
+      // Get shop from multiple sources
+      const shop =
+        localStorage.getItem('cfup_shop') ||
+        new URLSearchParams(window.location.search).get('shop') ||
+        // Extract from Shopify embedded app URL pattern
+        extractShopFromReferrer();
+
       if (shop) {
-        localStorage.removeItem('cfup_token');
-        // Derive backend base URL from API_URL by removing /api/v1
         const backendBase = API_URL.replace('/api/v1', '');
         window.location.href = `${backendBase}/api/v1/auth/install?shop=${shop}`;
       } else {
-        alert('Session expired. Please reinstall the app from Shopify Admin.');
-        window.location.href = '/app';
+        // No alert — just redirect to install page with instructions
+        window.location.href = '/install-expired';
       }
     }
     return Promise.reject(error);
   },
 );
+
+function extractShopFromReferrer(): string | null {
+  try {
+    // Shopify passes shop in URL when loading embedded app
+    const params = new URLSearchParams(window.location.search);
+    const host = params.get('host');
+    if (host) {
+      const decoded = atob(host);
+      const match = decoded.match(/([^/]+\.myshopify\.com)/);
+      if (match) return match[1];
+    }
+  } catch {}
+  return null;
+}

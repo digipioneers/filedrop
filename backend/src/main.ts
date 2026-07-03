@@ -3,6 +3,9 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { WebhooksService } from './webhooks/webhooks.service';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import { Merchant } from './auth/entities/merchant.entity';
 
 const logger = new Logger('Bootstrap');
 
@@ -33,6 +36,25 @@ async function bootstrap() {
   await app.listen(port, '0.0.0.0');
   logger.log(`🚀 Filedrop API listening on port ${port}`);
   logger.log(`   Health: http://localhost:${port}/api/v1/health`);
+
+  // Register webhooks for ALL active merchants on startup.
+  // This ensures GDPR compliance webhooks are always registered,
+  // even for merchants who installed before this feature was added,
+  // without requiring any manual console commands.
+  setTimeout(async () => {
+    try {
+      const webhooksService = app.get(WebhooksService);
+      const merchantRepo = app.get(getRepositoryToken(Merchant));
+      const merchants = await merchantRepo.find({ where: { isActive: true } });
+      logger.log(`📡 Registering webhooks for ${merchants.length} active merchant(s)...`);
+      for (const merchant of merchants) {
+        await webhooksService.registerWebhooksForMerchant(merchant);
+      }
+      logger.log('✅ Webhook registration complete');
+    } catch (err: any) {
+      logger.error(`Startup webhook registration failed: ${err?.message}`);
+    }
+  }, 5000); // 5 second delay to let app fully initialize
 }
 
 bootstrap().catch((err) => {
