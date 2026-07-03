@@ -58,14 +58,13 @@ export class AuthController {
     }
 
     // Exchange code for access token
-    const accessToken = await this.authService.exchangeCodeForToken(shop, code);
+    const { accessToken, expiresIn } = await this.authService.exchangeCodeForToken(shop, code);
 
     // Install/update merchant
     let merchant;
     try {
       merchant = await this.authService.installMerchant(shop, accessToken);
     } catch (err: any) {
-      // NestJS HttpExceptions use getStatus(), not .status
       const statusCode = typeof err?.getStatus === 'function' ? err.getStatus() : (err?.status || err?.statusCode);
       if (statusCode === 403) {
         const frontendUrl = this.configService.get('FRONTEND_URL', 'http://localhost:5173');
@@ -74,8 +73,9 @@ export class AuthController {
       throw err;
     }
 
-    // Generate JWT
-    const token = this.authService.signToken(merchant);
+    // Generate JWT — expire it when the Shopify online token expires (or 24h default)
+    const jwtExpiresIn = expiresIn ? `${expiresIn}s` : '24h';
+    const token = this.authService.signToken(merchant, jwtExpiresIn);
 
     const appUrl = this.configService.get('APP_URL');
     // Redirect to embedded app with token
