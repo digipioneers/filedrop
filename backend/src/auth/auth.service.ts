@@ -10,6 +10,12 @@ import { AppSettings } from '../admin/entities/app-settings.entity';
 import { BillingService } from '../billing/billing.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 
+interface ShopifyTokenResponse {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: Date;
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -76,16 +82,56 @@ export class AuthService {
     );
   }
 
-  async exchangeCodeForToken(shop: string, code: string): Promise<string> {
+  async exchangeCodeForToken(shop: string, code: string): Promise<ShopifyTokenResponse> {
+    const apiKey = this.configService.get('SHOPIFY_API_KEY');
+    const apiSecret = this.configService.get('SHOPIFY_API_SECRET');
+
+    // Shopify requires public apps to request expiring offline access
+    // tokens (mandatory since 2026-04-01 for new apps; non-expiring
+    // tokens are rejected outright by the Admin API with a 403). Passing
+    // expiring: 1 here makes Shopify return access_token + refresh_token
+    // + expires_in instead of a permanent token.
+    const response = await axios.post(
+      `https://${shop}/admin/oauth/access_token`,
+      { client_id: apiKey, client_secret: apiSecret, code, expiring: 1 },
+    );
+
+    const { access_token, refresh_token, expires_in } = response.data;
+    return {
+      accessToken: access_token,
+      refreshToken: refresh_token,
+      // expires_in is seconds from now; store a small safety margin so we
+      // refresh a bit before Shopify actually invalidates it.
+      expiresAt: new Date(Date.now() + (expires_in - 60) * 1000),
+    };
+  }
+
+  /**
+   * Exchange a refresh token for a new access token. Call this proactively
+   * before tokenExpiresAt, or reactively on a 401 from the Admin API.
+   */
+  async refreshAccessToken(shop: string, refreshToken: string): Promise<ShopifyTokenResponse> {
     const apiKey = this.configService.get('SHOPIFY_API_KEY');
     const apiSecret = this.configService.get('SHOPIFY_API_SECRET');
 
     const response = await axios.post(
       `https://${shop}/admin/oauth/access_token`,
-      { client_id: apiKey, client_secret: apiSecret, code },
+      {
+        client_id: apiKey,
+        client_secret: apiSecret,
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+      },
     );
 
-    return response.data.access_token;
+    const { access_token, refresh_token, expires_in } = response.data;
+    return {
+      accessToken: access_token,
+      // Shopify rotates the refresh token on every use; the old one is
+      // invalidated, so we must persist the new one every time.
+      refreshToken: refresh_token,
+      expiresAt: new Date(Date.now() + (expires_in - 60) * 1000),
+    };
   }
 
   /**
@@ -104,14 +150,16 @@ export class AuthService {
    * New shop signups are blocked when the super-admin has disabled
    * registrations; existing merchants can always reinstall/reconnect.
    */
-  async installMerchant(shop: string, accessToken: string): Promise<Merchant> {
+  async installMerchant(shop: string, token: ShopifyTokenResponse): Promise<Merchant> {
     let merchant = await this.merchantRepo.findOne({ where: { shopDomain: shop } });
     const isNewMerchant = !merchant;
 
-    const shopInfo = await this.fetchShopInfo(shop, accessToken);
+    const shopInfo = await this.fetchShopInfo(shop, token.accessToken);
 
     if (merchant) {
-      merchant.accessToken = accessToken;
+      merchant.accessToken = token.accessToken;
+      merchant.refreshToken = token.refreshToken;
+      merchant.tokenExpiresAt = token.expiresAt;
       merchant.shopName = shopInfo.name;
       merchant.shopEmail = shopInfo.email;
       merchant.shopCurrency = shopInfo.currency;
@@ -120,7 +168,9 @@ export class AuthService {
     } else {
       merchant = this.merchantRepo.create({
         shopDomain: shop,
-        accessToken,
+        accessToken: token.accessToken,
+        refreshToken: token.refreshToken,
+        tokenExpiresAt: token.expiresAt,
         shopName: shopInfo.name,
         shopEmail: shopInfo.email,
         shopCurrency: shopInfo.currency,

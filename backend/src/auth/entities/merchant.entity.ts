@@ -14,6 +14,12 @@ export class Merchant {
   @Column({ name: 'access_token', length: 500 })
   accessToken: string;
 
+  @Column({ name: 'refresh_token', length: 500, nullable: true })
+  refreshToken: string;
+
+  @Column({ name: 'token_expires_at', type: 'datetime', nullable: true })
+  tokenExpiresAt: Date;
+
   @Column({ name: 'shop_name', nullable: true, length: 255 })
   shopName: string;
 

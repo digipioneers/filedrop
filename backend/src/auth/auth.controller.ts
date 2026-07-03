@@ -61,14 +61,14 @@ export class AuthController {
     }
     this.logger.log(`[callback] HMAC valid, exchanging code for token: shop=${shop}`);
 
-    // Exchange code for access token
-    const accessToken = await this.authService.exchangeCodeForToken(shop, code);
-    this.logger.log(`[callback] got access token (len=${accessToken?.length ?? 0}), calling installMerchant: shop=${shop}`);
+    // Exchange code for access token (expiring offline token: access + refresh + expiry)
+    const shopifyToken = await this.authService.exchangeCodeForToken(shop, code);
+    this.logger.log(`[callback] got access token (len=${shopifyToken.accessToken?.length ?? 0}, hasRefreshToken=${!!shopifyToken.refreshToken}), calling installMerchant: shop=${shop}`);
 
     // Install/update merchant
     let merchant;
     try {
-      merchant = await this.authService.installMerchant(shop, accessToken);
+      merchant = await this.authService.installMerchant(shop, shopifyToken);
       this.logger.log(`[callback] installMerchant succeeded: shop=${shop} merchantId=${merchant?.id}`);
     } catch (err: any) {
       const statusCode = typeof err?.getStatus === 'function' ? err.getStatus() : (err?.status || err?.statusCode);
