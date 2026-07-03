@@ -18,8 +18,23 @@ export class AppController {
     const shop = query.shop;
 
     if (shop) {
-      // Shopify is loading the app — redirect to OAuth install
-      return res.redirect(`/api/v1/auth/install?shop=${shop}`);
+      // Same iframe-escape reasoning as AuthController.install() — a plain
+      // server redirect can't break out of an iframe, and this route can
+      // be hit from an embedded context (e.g. a stale link pointing at the
+      // backend directly instead of the frontend application_url).
+      res.set('Content-Type', 'text/html');
+      return res.send(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body>
+<script>
+  var target = ${JSON.stringify(`/api/v1/auth/install?shop=${shop}`)};
+  if (window.top === window.self) {
+    window.location.href = target;
+  } else {
+    window.top.location.href = target;
+  }
+</script>
+</body></html>`);
     }
 
     // No shop param — return basic info

@@ -31,7 +31,28 @@ export class AuthController {
     this.stateStore.set(state, { shop, expiresAt: Date.now() + 10 * 60 * 1000 });
 
     const authUrl = this.authService.generateAuthUrl(shop, state);
-    res.redirect(authUrl);
+
+    // A plain HTTP 3xx redirect executes inside whatever browsing context
+    // made this request. If this endpoint is ever hit from inside an
+    // iframe (embedded app context), a server-side redirect to Shopify's
+    // OAuth screen can't escape that iframe — and Shopify's OAuth screen
+    // explicitly refuses to render inside any iframe, which surfaces to
+    // the merchant as "admin.shopify.com refused to connect". A tiny
+    // HTML page with a JS top-level redirect always escapes correctly,
+    // whether we're framed or not.
+    res.set('Content-Type', 'text/html');
+    res.send(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body>
+<script>
+  var target = ${JSON.stringify(authUrl)};
+  if (window.top === window.self) {
+    window.location.href = target;
+  } else {
+    window.top.location.href = target;
+  }
+</script>
+</body></html>`);
   }
 
   /**

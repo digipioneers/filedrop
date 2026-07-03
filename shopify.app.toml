@@ -1,6 +1,6 @@
 name = "Filedrop"
 client_id = "7d13d3b0c1082a17bcfb8063a4e323af"
-application_url = "https://filedrop-production-6d21.up.railway.app"
+application_url = "https://zestful-serenity-production-11ac.up.railway.app"
 embedded = true
 
 [access_scopes]
