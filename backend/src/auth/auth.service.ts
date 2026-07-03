@@ -223,6 +223,14 @@ export class AuthService {
   }
 
   /**
+   * Find merchant by shop domain (for session-token strategy — the token's
+   * `dest` claim carries the shop domain, not our internal merchant id).
+   */
+  async findByShopDomain(shopDomain: string): Promise<Merchant | null> {
+    return this.merchantRepo.findOne({ where: { shopDomain } });
+  }
+
+  /**
    * Mark merchant as uninstalled.
    */
   async uninstallMerchant(shopDomain: string): Promise<void> {

@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
+import { useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useSearchParams } from 'react-router-dom';
 import { AppProvider } from '@shopify/polaris';
 import enTranslations from '@shopify/polaris/locales/en.json';
-import { Provider as AppBridgeProvider } from '@shopify/app-bridge-react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Merchant pages
@@ -33,20 +33,18 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
 });
 
-const SHOPIFY_API_KEY = (import.meta as any).env?.VITE_SHOPIFY_API_KEY || '';
-
-function TokenHandler({ children }: { children: React.ReactNode }) {
+/**
+ * Persists `shop`/`host` from the URL so the API client (utils/api.ts) can
+ * still figure out which shop to redirect to for re-install if a session
+ * token request ever fails. App Bridge (loaded via CDN in index.html) reads
+ * the shopify-api-key meta tag and the `host` URL param itself to bootstrap
+ * `window.shopify` — there's no provider component needed anymore.
+ */
+function ShopContextHandler({ children }: { children: React.ReactNode }) {
   const [params] = useSearchParams();
   useEffect(() => {
-    const token = params.get('token');
     const shop = params.get('shop');
     const host = params.get('host');
-
-    if (token) {
-      localStorage.setItem('cfup_token', token);
-      if (shop) localStorage.setItem('cfup_shop', shop);
-      window.history.replaceState({}, '', window.location.pathname);
-    }
 
     if (host) {
       localStorage.setItem('cfup_host', host);
@@ -69,35 +67,11 @@ function AdminRoute() {
 }
 
 function AppWithBridge() {
-  const [params] = useSearchParams();
-  const host = params.get('host') || localStorage.getItem('cfup_host') || '';
-  const shop = params.get('shop') || localStorage.getItem('cfup_shop') || '';
-
-  // If we have a host param, use App Bridge for embedded context
-  if (host && SHOPIFY_API_KEY) {
-    const config = {
-      apiKey: SHOPIFY_API_KEY,
-      host,
-      forceRedirect: true,
-    };
-
-    return (
-      <AppBridgeProvider config={config}>
-        <AppProvider i18n={enTranslations}>
-          <TokenHandler>
-            <AppRoutes />
-          </TokenHandler>
-        </AppProvider>
-      </AppBridgeProvider>
-    );
-  }
-
-  // No host param — render without App Bridge (direct URL access, admin panel)
   return (
     <AppProvider i18n={enTranslations}>
-      <TokenHandler>
+      <ShopContextHandler>
         <AppRoutes />
-      </TokenHandler>
+      </ShopContextHandler>
     </AppProvider>
   );
 }

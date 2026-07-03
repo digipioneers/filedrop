@@ -4,6 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Filedrop - Shopify File Upload App</title>
+  <!-- Required for embedded apps: Shopify reads this to initialize App Bridge -->
+  <meta name="shopify-api-key" content="%VITE_SHOPIFY_API_KEY%" />
+  <!-- Must load before any other script. This is the CDN-hosted, Shopify-managed
+       version of App Bridge — required for App Store review (the npm package
+       @shopify/app-bridge is legacy and no longer accepted). -->
+  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
   <!-- Runtime config loaded before React - change apiUrl here without rebuilding -->
   <script src="/config.js"></script>
 </head>

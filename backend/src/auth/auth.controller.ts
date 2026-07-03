@@ -85,14 +85,13 @@ export class AuthController {
       throw err;
     }
 
-    // Generate JWT with long expiry for offline token sessions
-    const token = this.authService.signToken(merchant);
-
-    const appUrl = this.configService.get('APP_URL');
-    // Redirect to embedded app with token
-    // Store token in cookie and redirect to frontend
-    const frontendUrl = this.configService.get('FRONTEND_URL', 'http://localhost:5173');
-    res.redirect(`${frontendUrl}/app?token=${token}&shop=${shop}`);
+    // Redirect to the app inside Shopify Admin. Shopify loads it in an
+    // iframe with the `host` param automatically (embedded = true in
+    // shopify.app.toml); App Bridge then takes over and the frontend
+    // authenticates every backend request with a session token — no
+    // custom token needs to be minted or passed through the URL here.
+    const apiKey = this.configService.get('SHOPIFY_API_KEY');
+    res.redirect(`https://${shop}/admin/apps/${apiKey}`);
   }
 
   /**

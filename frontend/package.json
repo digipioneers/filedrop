@@ -13,8 +13,6 @@
     "start:prod": "serve dist -p ${PORT:-3001} -s"
   },
   "dependencies": {
-    "@shopify/app-bridge": "^3.7.11",
-    "@shopify/app-bridge-react": "^3.7.7",
     "@shopify/polaris": "^12.0.0",
     "@shopify/polaris-icons": "^8.0.0",
     "@tanstack/react-query": "^5.0.0",

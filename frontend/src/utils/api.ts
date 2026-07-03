@@ -1,14 +1,38 @@
 import axios from 'axios';
 import { API_URL } from './config';
 
+declare global {
+  interface Window {
+    // Global injected by the App Bridge CDN script (see index.html).
+    shopify?: {
+      idToken: () => Promise<string>;
+    };
+  }
+}
+
 export const api = axios.create({
   baseURL: API_URL,
   timeout: 30_000,
 });
 
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('cfup_token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
+/**
+ * Every request gets a FRESH Shopify session token — they're only valid for
+ * ~1 minute, so we must fetch a new one per-request rather than caching it
+ * (this is what Shopify's "Using session tokens for user authentication"
+ * automated check verifies).
+ */
+api.interceptors.request.use(async (config) => {
+  if (window.shopify?.idToken) {
+    try {
+      const token = await window.shopify.idToken();
+      config.headers.Authorization = `Bearer ${token}`;
+    } catch (err) {
+      // App Bridge not ready yet / not in an embedded context — let the
+      // request go through unauthenticated; the backend will 401 and the
+      // response interceptor below sends the merchant through install/OAuth.
+      console.warn('Could not get Shopify session token:', err);
+    }
+  }
   return config;
 });
 
@@ -16,7 +40,6 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('cfup_token');
       const shop = getShop();
       if (shop) {
         const backendBase = API_URL.replace('/api/v1', '');
