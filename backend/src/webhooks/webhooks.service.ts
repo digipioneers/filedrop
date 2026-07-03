@@ -35,12 +35,17 @@ export class WebhooksService {
       return;
     }
 
+    // Register via both REST (per-merchant) and GraphQL (app-level subscriptions)
+    await this.registerViaRest(merchant, appUrl);
+    await this.registerViaGraphQL(merchant, appUrl);
+  }
+
+  private async registerViaRest(merchant: Merchant, appUrl: string): Promise<void> {
     const webhooks = [
       { topic: 'app/uninstalled',        address: `${appUrl}/api/v1/webhooks/app/uninstalled` },
       { topic: 'orders/create',          address: `${appUrl}/api/v1/webhooks/orders/create` },
       { topic: 'orders/updated',         address: `${appUrl}/api/v1/webhooks/orders/updated` },
       { topic: 'products/update',        address: `${appUrl}/api/v1/webhooks/products/update` },
-      // GDPR mandatory compliance webhooks — all route to unified endpoint
       { topic: 'customers/data_request', address: `${appUrl}/api/v1/gdpr/webhooks` },
       { topic: 'customers/redact',       address: `${appUrl}/api/v1/gdpr/webhooks` },
       { topic: 'shop/redact',            address: `${appUrl}/api/v1/gdpr/webhooks` },
@@ -60,15 +65,73 @@ export class WebhooksService {
           },
         );
         if (res.status === 201) {
-          this.logger.log(`✅ Webhook registered: ${webhook.topic} → ${webhook.address}`);
+          this.logger.log(`✅ REST webhook registered: ${webhook.topic}`);
         }
       } catch (err: any) {
-        // 422 = already exists — that's fine
         if (err?.response?.status === 422) {
-          this.logger.log(`⏭  Webhook already registered: ${webhook.topic}`);
+          this.logger.log(`⏭  REST webhook already exists: ${webhook.topic}`);
         } else {
-          this.logger.error(`❌ Failed to register webhook ${webhook.topic}: ${err?.message}`);
+          this.logger.error(`❌ REST webhook failed ${webhook.topic}: ${err?.message}`);
         }
+      }
+    }
+  }
+
+  /**
+   * Register webhooks via GraphQL pubSubWebhookSubscriptionCreate mutation.
+   * This is the modern Shopify approach that works without shopify app deploy.
+   * Uses HTTP endpoint subscriptions (not pub/sub) via webhookSubscriptionCreate.
+   */
+  private async registerViaGraphQL(merchant: Merchant, appUrl: string): Promise<void> {
+    const topics = [
+      { topic: 'CUSTOMERS_DATA_REQUEST', address: `${appUrl}/api/v1/gdpr/webhooks` },
+      { topic: 'CUSTOMERS_REDACT',       address: `${appUrl}/api/v1/gdpr/webhooks` },
+      { topic: 'SHOP_REDACT',            address: `${appUrl}/api/v1/gdpr/webhooks` },
+      { topic: 'APP_UNINSTALLED',        address: `${appUrl}/api/v1/webhooks/app/uninstalled` },
+      { topic: 'ORDERS_CREATE',          address: `${appUrl}/api/v1/webhooks/orders/create` },
+    ];
+
+    for (const { topic, address } of topics) {
+      const mutation = `
+        mutation {
+          webhookSubscriptionCreate(
+            topic: ${topic}
+            webhookSubscription: {
+              format: JSON
+              callbackUrl: "${address}"
+            }
+          ) {
+            userErrors { field message }
+            webhookSubscription { id }
+          }
+        }
+      `;
+      try {
+        const res = await axios.post(
+          `https://${merchant.shopDomain}/admin/api/2026-07/graphql.json`,
+          { query: mutation },
+          {
+            headers: {
+              'X-Shopify-Access-Token': merchant.accessToken,
+              'Content-Type': 'application/json',
+            },
+            timeout: 10_000,
+          },
+        );
+        const result = res.data?.data?.webhookSubscriptionCreate;
+        const errors = result?.userErrors || [];
+        const alreadyExists = errors.some((e: any) =>
+          e.message?.toLowerCase().includes('already') || e.message?.toLowerCase().includes('taken')
+        );
+        if (errors.length === 0) {
+          this.logger.log(`✅ GraphQL webhook registered: ${topic}`);
+        } else if (alreadyExists) {
+          this.logger.log(`⏭  GraphQL webhook already exists: ${topic}`);
+        } else {
+          this.logger.warn(`⚠️  GraphQL webhook errors for ${topic}: ${JSON.stringify(errors)}`);
+        }
+      } catch (err: any) {
+        this.logger.error(`❌ GraphQL webhook failed ${topic}: ${err?.message}`);
       }
     }
   }
