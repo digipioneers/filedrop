@@ -15,6 +15,16 @@ async function bootstrap() {
     logger: ['error', 'warn', 'log'],
   });
 
+  app.use((req: any, res: any, next: any) => {
+    // Required for Shopify embedded apps - allow Shopify admin to load this in an iframe
+    res.removeHeader('X-Frame-Options');
+    res.setHeader(
+      'Content-Security-Policy',
+      "frame-ancestors https://*.myshopify.com https://admin.shopify.com"
+    );
+    next();
+  });
+
   app.setGlobalPrefix('api/v1', { exclude: ['/'] });
 
   app.enableCors({
