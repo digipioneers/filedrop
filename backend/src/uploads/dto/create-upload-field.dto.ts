@@ -1,4 +1,4 @@
-import { IsString, IsEnum, IsBoolean, IsNumber, IsArray, IsOptional, Min, Max } from 'class-validator';
+import { IsString, IsEnum, IsBoolean, IsNumber, IsArray, IsObject, IsOptional, Min, Max } from 'class-validator';
 import { FieldType, AssignmentType } from '../entities/upload-field.entity';
 
 export class CreateUploadFieldDto {
@@ -80,6 +80,26 @@ export class CreateUploadFieldDto {
   @IsBoolean()
   @IsOptional()
   enableRotation?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  enablePreview?: boolean;
+
+  @IsString()
+  @IsOptional()
+  previewTemplateUrl?: string;
+
+  @IsObject()
+  @IsOptional()
+  previewPlacement?: { x: number; y: number; width: number; height: number };
+
+  @IsBoolean()
+  @IsOptional()
+  allowCustomerPositioning?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  allowCustomerText?: boolean;
 
   @IsBoolean()
   @IsOptional()

@@ -42,8 +42,56 @@
   </div>
 </div>
 
+<!-- Product-preview modal: shows the customer's image composited onto the merchant's mockup template -->
+<div id="cfup-preview-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.82);z-index:99999;align-items:center;justify-content:center;flex-direction:column;">
+  <div style="background:#fff;border-radius:12px;max-width:680px;width:calc(100% - 32px);padding:20px;box-shadow:0 24px 64px rgba(0,0,0,.4);">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <strong style="font-size:16px;">Preview on Product</strong>
+      <button id="cfup-preview-close" style="background:none;border:none;font-size:22px;cursor:pointer;color:#555;">✕</button>
+    </div>
+    <div style="position:relative;max-height:420px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:#f4f4f4;overflow:hidden;">
+      <canvas id="cfup-preview-canvas" style="max-width:100%;max-height:420px;display:block;"></canvas>
+    </div>
+    <p style="margin:10px 0 0;font-size:13px;color:#666;">This is an approximate preview to help you check placement and sizing.</p>
+    <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+      <button class="cfup-editor-btn" id="cfup-preview-back">← Back</button>
+      <div style="flex:1;"></div>
+      <button id="cfup-preview-confirm" style="background:#008060;color:#fff;border:none;border-radius:6px;padding:10px 22px;font-weight:700;cursor:pointer;font-size:14px;">
+        Looks Good, Upload
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Interactive designer: customer drags/resizes/rotates their image and can add text -->
+<div id="cfup-designer-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.82);z-index:99999;align-items:center;justify-content:center;flex-direction:column;">
+  <div style="background:#fff;border-radius:12px;max-width:720px;width:calc(100% - 32px);padding:20px;box-shadow:0 24px 64px rgba(0,0,0,.4);">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <strong style="font-size:16px;">Design Your Product</strong>
+      <button id="cfup-designer-close" style="background:none;border:none;font-size:22px;cursor:pointer;color:#555;">✕</button>
+    </div>
+    <div style="display:flex;justify-content:center;background:#f4f4f4;border-radius:8px;overflow:hidden;">
+      <canvas id="cfup-designer-canvas"></canvas>
+    </div>
+    <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+      <button class="cfup-editor-btn" id="cfup-designer-rotate-left" title="Rotate Left">↺ Rotate</button>
+      <button class="cfup-editor-btn" id="cfup-designer-rotate-right" title="Rotate Right">↻ Rotate</button>
+      <button class="cfup-editor-btn" id="cfup-designer-add-text" title="Add Text">＋ Add Text</button>
+      <input type="color" id="cfup-designer-text-color" value="#000000" title="Text color" style="width:36px;height:36px;border:none;border-radius:6px;cursor:pointer;padding:0;display:none;" />
+      <button class="cfup-editor-btn" id="cfup-designer-delete-selected" title="Delete selected" style="display:none;">🗑 Delete</button>
+      <div style="flex:1;"></div>
+      <button id="cfup-designer-confirm" style="background:#008060;color:#fff;border:none;border-radius:6px;padding:10px 22px;font-weight:700;cursor:pointer;font-size:14px;">
+        Use This Design
+      </button>
+    </div>
+  </div>
+</div>
+
+
+
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.css" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
 
 <style>
   :root {
@@ -332,6 +380,214 @@
     }, 'image/jpeg', 0.92);
   });
 
+  // ── Product preview (composite customer image onto merchant mockup) ────────
+
+  const previewModal   = document.getElementById('cfup-preview-modal');
+  const previewCanvas  = document.getElementById('cfup-preview-canvas');
+  let pendingPreviewCallback = null;
+  let pendingPreviewFile = null;
+
+  function openPreview(templateUrl, placement, file, onConfirm) {
+    pendingPreviewCallback = onConfirm;
+    pendingPreviewFile = file;
+    previewModal.style.display = 'flex';
+
+    const ctx = previewCanvas.getContext('2d');
+    const templateImg = new Image();
+    templateImg.crossOrigin = 'anonymous';
+    templateImg.onload = () => {
+      previewCanvas.width = templateImg.naturalWidth;
+      previewCanvas.height = templateImg.naturalHeight;
+      ctx.drawImage(templateImg, 0, 0);
+
+      // Only composite a live preview for image files — for PDFs/docs/etc.
+      // there's nothing to draw, so just show the bare template.
+      if (!file.type.startsWith('image/')) return;
+
+      const fileUrl = URL.createObjectURL(file);
+      const designImg = new Image();
+      designImg.onload = () => {
+        const p = placement || { x: 25, y: 25, width: 50, height: 50 };
+        const dx = (p.x / 100) * templateImg.naturalWidth;
+        const dy = (p.y / 100) * templateImg.naturalHeight;
+        const dw = (p.width / 100) * templateImg.naturalWidth;
+        const dh = (p.height / 100) * templateImg.naturalHeight;
+
+        // Fit the design image inside the placement box, preserving its
+        // aspect ratio, centered — rather than stretching it to fill.
+        const scale = Math.min(dw / designImg.naturalWidth, dh / designImg.naturalHeight);
+        const drawW = designImg.naturalWidth * scale;
+        const drawH = designImg.naturalHeight * scale;
+        const drawX = dx + (dw - drawW) / 2;
+        const drawY = dy + (dh - drawH) / 2;
+
+        ctx.drawImage(designImg, drawX, drawY, drawW, drawH);
+        URL.revokeObjectURL(fileUrl);
+      };
+      designImg.src = fileUrl;
+    };
+    templateImg.onerror = () => {
+      // Template failed to load (e.g. network hiccup) — don't block the
+      // customer's upload over a cosmetic preview failing.
+      previewModal.style.display = 'none';
+      if (pendingPreviewCallback) pendingPreviewCallback(pendingPreviewFile);
+      pendingPreviewCallback = null;
+    };
+    templateImg.src = templateUrl;
+  }
+
+  document.getElementById('cfup-preview-close').addEventListener('click', () => {
+    previewModal.style.display = 'none';
+    pendingPreviewCallback = null;
+    pendingPreviewFile = null;
+  });
+
+  document.getElementById('cfup-preview-back').addEventListener('click', () => {
+    previewModal.style.display = 'none';
+    pendingPreviewCallback = null;
+    pendingPreviewFile = null;
+  });
+
+  document.getElementById('cfup-preview-confirm').addEventListener('click', () => {
+    previewModal.style.display = 'none';
+    if (pendingPreviewCallback && pendingPreviewFile) {
+      pendingPreviewCallback(pendingPreviewFile);
+    }
+    pendingPreviewCallback = null;
+    pendingPreviewFile = null;
+  });
+
+  // ── Interactive designer (drag/resize/rotate image + add text) ─────────────
+  // Upgrade over openPreview(): the customer positions their own image and
+  // can add text, instead of the merchant fixing one placement for everyone.
+
+  let designerCanvas = null;
+  let pendingDesignerCallback = null;
+
+  function updateDesignerToolbar() {
+    if (!designerCanvas) return;
+    const active = designerCanvas.getActiveObject();
+    document.getElementById('cfup-designer-delete-selected').style.display = active ? 'inline-block' : 'none';
+    document.getElementById('cfup-designer-text-color').style.display =
+      (active && active.type === 'textbox') ? 'inline-block' : 'none';
+  }
+
+  function openDesigner(templateUrl, initialPlacement, file, opts, onConfirm) {
+    pendingDesignerCallback = onConfirm;
+    const modal = document.getElementById('cfup-designer-modal');
+    modal.style.display = 'flex';
+
+    const templateImg = new Image();
+    templateImg.crossOrigin = 'anonymous';
+    templateImg.onload = () => {
+      const maxW = Math.min(640, window.innerWidth - 64);
+      const scale = Math.min(1, maxW / templateImg.naturalWidth);
+      const canvasW = Math.round(templateImg.naturalWidth * scale);
+      const canvasH = Math.round(templateImg.naturalHeight * scale);
+
+      if (designerCanvas) { designerCanvas.dispose(); }
+      designerCanvas = new fabric.Canvas('cfup-designer-canvas', { width: canvasW, height: canvasH });
+
+      fabric.Image.fromURL(templateUrl, (bgImg) => {
+        bgImg.scaleToWidth(canvasW);
+        designerCanvas.setBackgroundImage(bgImg, designerCanvas.renderAll.bind(designerCanvas));
+      }, { crossOrigin: 'anonymous' });
+
+      if (file && file.type.startsWith('image/')) {
+        const p = initialPlacement || { x: 25, y: 25, width: 50, height: 50 };
+        const fileUrl = URL.createObjectURL(file);
+        fabric.Image.fromURL(fileUrl, (img) => {
+          const targetW = (p.width / 100) * canvasW;
+          const targetH = (p.height / 100) * canvasH;
+          const scaleFactor = Math.min(targetW / img.width, targetH / img.height) || 1;
+          img.set({
+            left: (p.x / 100) * canvasW,
+            top: (p.y / 100) * canvasH,
+            scaleX: scaleFactor,
+            scaleY: scaleFactor,
+            cornerColor: '#008060',
+            cornerStyle: 'circle',
+            transparentCorners: false,
+            borderColor: '#008060',
+          });
+          designerCanvas.add(img);
+          designerCanvas.setActiveObject(img);
+          designerCanvas.renderAll();
+          URL.revokeObjectURL(fileUrl);
+        }, { crossOrigin: 'anonymous' });
+      }
+
+      designerCanvas.on('selection:created', updateDesignerToolbar);
+      designerCanvas.on('selection:updated', updateDesignerToolbar);
+      designerCanvas.on('selection:cleared', updateDesignerToolbar);
+
+      document.getElementById('cfup-designer-add-text').style.display = opts.allowText ? 'inline-block' : 'none';
+    };
+    templateImg.src = templateUrl;
+  }
+
+  document.getElementById('cfup-designer-close').addEventListener('click', () => {
+    document.getElementById('cfup-designer-modal').style.display = 'none';
+    pendingDesignerCallback = null;
+  });
+
+  document.getElementById('cfup-designer-rotate-left').addEventListener('click', () => {
+    const obj = designerCanvas && designerCanvas.getActiveObject();
+    if (obj) { obj.rotate((obj.angle || 0) - 15); designerCanvas.renderAll(); }
+  });
+  document.getElementById('cfup-designer-rotate-right').addEventListener('click', () => {
+    const obj = designerCanvas && designerCanvas.getActiveObject();
+    if (obj) { obj.rotate((obj.angle || 0) + 15); designerCanvas.renderAll(); }
+  });
+
+  document.getElementById('cfup-designer-add-text').addEventListener('click', () => {
+    if (!designerCanvas) return;
+    const text = new fabric.Textbox('Your text here', {
+      left: designerCanvas.width / 2 - 70,
+      top: designerCanvas.height / 2 - 15,
+      fontSize: 28,
+      fill: '#000000',
+      fontFamily: 'Arial, sans-serif',
+      cornerColor: '#008060',
+      borderColor: '#008060',
+    });
+    designerCanvas.add(text);
+    designerCanvas.setActiveObject(text);
+    designerCanvas.renderAll();
+    updateDesignerToolbar();
+  });
+
+  document.getElementById('cfup-designer-text-color').addEventListener('input', (e) => {
+    const obj = designerCanvas && designerCanvas.getActiveObject();
+    if (obj && obj.type === 'textbox') {
+      obj.set('fill', e.target.value);
+      designerCanvas.renderAll();
+    }
+  });
+
+  document.getElementById('cfup-designer-delete-selected').addEventListener('click', () => {
+    const obj = designerCanvas && designerCanvas.getActiveObject();
+    if (obj) {
+      designerCanvas.remove(obj);
+      designerCanvas.discardActiveObject();
+      designerCanvas.renderAll();
+      updateDesignerToolbar();
+    }
+  });
+
+  document.getElementById('cfup-designer-confirm').addEventListener('click', () => {
+    if (!designerCanvas || !pendingDesignerCallback) return;
+    designerCanvas.discardActiveObject();
+    designerCanvas.renderAll();
+    designerCanvas.getElement().toBlob((blob) => {
+      document.getElementById('cfup-designer-modal').style.display = 'none';
+      const designedFile = new File([blob], 'custom-design.png', { type: 'image/png' });
+      const cb = pendingDesignerCallback;
+      pendingDesignerCallback = null;
+      cb(designedFile);
+    }, 'image/png');
+  });
+
   // ── Fetch fields ─────────────────────────────────────────────────────────
 
   async function loadFields() {
@@ -521,12 +777,33 @@
         return;
       }
 
-      files.forEach((file) => {
-        // If image editing is enabled, open editor first
-        if (field.enableCropping && file.type.startsWith('image/')) {
-          openEditor(file, (editedFile) => uploadFile(editedFile));
+      const proceedToUpload = (f) => {
+        if (field.enablePreview && field.previewTemplateUrl && field.allowCustomerPositioning) {
+          // Full designer: customer drags/resizes/rotates their image and
+          // can add text — this replaces the fixed compositing preview.
+          openDesigner(
+            field.previewTemplateUrl,
+            field.previewPlacement,
+            f,
+            { allowText: !!field.allowCustomerText },
+            (designedFile) => uploadFile(designedFile),
+          );
+        } else if (field.enablePreview && field.previewTemplateUrl) {
+          // Simpler mode: fixed placement, preview-only confirmation.
+          openPreview(field.previewTemplateUrl, field.previewPlacement, f, (confirmedFile) => uploadFile(confirmedFile));
         } else {
-          uploadFile(file);
+          uploadFile(f);
+        }
+      };
+
+      files.forEach((file) => {
+        // If image editing is enabled AND we're not going into the full
+        // designer (which has its own rotate/resize), open the crop editor first.
+        const skipCropBecauseDesigner = field.enablePreview && field.allowCustomerPositioning;
+        if (field.enableCropping && file.type.startsWith('image/') && !skipCropBecauseDesigner) {
+          openEditor(file, (editedFile) => proceedToUpload(editedFile));
+        } else {
+          proceedToUpload(file);
         }
       });
     }

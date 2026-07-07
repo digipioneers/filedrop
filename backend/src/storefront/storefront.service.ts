@@ -77,12 +77,33 @@ export class StorefrontService {
         fieldType: f.fieldType,
         enableCropping: f.enableCropping,
         enableRotation: f.enableRotation,
+        enablePreview: f.enablePreview,
+        previewTemplateUrl: f.enablePreview ? f.previewTemplateUrl : null,
+        previewPlacement: f.enablePreview ? f.previewPlacement : null,
+        allowCustomerPositioning: f.enablePreview ? f.allowCustomerPositioning : false,
+        allowCustomerText: f.enablePreview ? f.allowCustomerText : false,
         minWidth: f.minWidth,
         maxWidth: f.maxWidth,
         minHeight: f.minHeight,
         maxHeight: f.maxHeight,
         requiredAspectRatio: f.requiredAspectRatio,
       }));
+  }
+
+  /**
+   * Fetches the raw bytes for a field's preview-template mockup image, for
+   * the public proxy route. Not scoped to a merchant since fieldId alone
+   * is enough — this is a non-sensitive template photo.
+   */
+  async getPreviewTemplateFile(fieldId: string): Promise<{ buffer: Buffer; mimeType: string }> {
+    const field = await this.fieldRepo.findOne({ where: { id: fieldId } });
+    if (!field || !field.enablePreview || !field.previewTemplateKey) {
+      throw new NotFoundException('Preview template not found');
+    }
+    const buffer = await this.storageService.getFileBuffer(field.previewTemplateKey);
+    const ext = field.previewTemplateKey.split('.').pop() || 'jpg';
+    const mimeType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+    return { buffer, mimeType };
   }
 
   async getPublicSettings(shopOrMerchantId: string) {

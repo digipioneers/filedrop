@@ -48,6 +48,11 @@ const defaultForm = {
   requiredAspectRatio: '',
   enableCropping: false,
   enableRotation: false,
+  enablePreview: false,
+  previewTemplateUrl: '' as string,
+  previewPlacement: { x: 25, y: 25, width: 50, height: 50 },
+  allowCustomerPositioning: false,
+  allowCustomerText: false,
   isActive: true,
 };
 
@@ -113,6 +118,35 @@ export function UploadFieldFormPage() {
 
   const set = (key: string) => (value: any) =>
     setForm((prev) => ({ ...prev, [key]: value }));
+
+  const templateUploadMutation = useMutation({
+    mutationFn: (file: File) => {
+      const fd = new FormData();
+      fd.append('file', file);
+      return api.post(`/uploads/fields/${id}/preview-template`, fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+    },
+    onSuccess: (res) => {
+      const updated = res.data.data ?? res.data;
+      set('previewTemplateUrl')(updated.previewTemplateUrl);
+      set('previewPlacement')(updated.previewPlacement ?? form.previewPlacement);
+      queryClient.invalidateQueries({ queryKey: ['upload-field', id] });
+    },
+    onError: (err: any) => {
+      setError(err.response?.data?.message ?? 'Failed to upload preview template');
+    },
+  });
+
+  const handleTemplateFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) templateUploadMutation.mutate(file);
+  };
+
+  const setPlacement = (key: 'x' | 'y' | 'width' | 'height') => (value: string) => {
+    const num = Math.max(0, Math.min(100, Number(value) || 0));
+    setForm((prev) => ({ ...prev, previewPlacement: { ...prev.previewPlacement, [key]: num } }));
+  };
 
   const addExtension = () => {
     const ext = newExtension.replace(/^\./, '').toLowerCase().trim();
@@ -362,6 +396,120 @@ export function UploadFieldFormPage() {
                       checked={form.enableRotation}
                       onChange={set('enableRotation')}
                     />
+
+                    <Text variant="headingSm" as="h3">Product Preview</Text>
+                    <Checkbox
+                      label="Enable product preview"
+                      checked={form.enablePreview}
+                      onChange={set('enablePreview')}
+                      helpText="Customers see their uploaded image composited onto a product mockup before submitting, so they can confirm it looks right."
+                    />
+
+                    {form.enablePreview && (
+                      <BlockStack gap="200">
+                        <Checkbox
+                          label="Allow customers to reposition their image"
+                          checked={form.allowCustomerPositioning}
+                          onChange={set('allowCustomerPositioning')}
+                          helpText="Instead of a fixed placement, customers can drag, resize, and rotate their image on the mockup themselves — like a full design tool."
+                        />
+                        <Checkbox
+                          label="Allow customers to add their own text"
+                          checked={form.allowCustomerText}
+                          onChange={set('allowCustomerText')}
+                          helpText="Adds a text tool so customers can add a name or short message onto their design."
+                        />
+                      </BlockStack>
+                    )}
+
+                    {form.enablePreview && !isEdit && (
+                      <Banner tone="info">
+                        Save this field first, then come back to upload a mockup/template image.
+                      </Banner>
+                    )}
+
+                    {form.enablePreview && isEdit && (
+                      <BlockStack gap="300">
+                        <div>
+                          <Text variant="bodyMd" fontWeight="medium" as="p">Mockup template image</Text>
+                          <Text variant="bodySm" tone="subdued" as="p">
+                            A photo of the blank product (e.g. a plain t-shirt). The customer's image will be
+                            overlaid on top of it.
+                          </Text>
+                          <div style={{ marginTop: 8 }}>
+                            <input type="file" accept="image/*" onChange={handleTemplateFileChange} />
+                          </div>
+                          {templateUploadMutation.isPending && <Spinner size="small" />}
+                        </div>
+
+                        {form.previewTemplateUrl && (
+                          <div>
+                            <Text variant="bodyMd" fontWeight="medium" as="p">
+                              {form.allowCustomerPositioning ? 'Starting position (% of template)' : 'Placement (% of template)'}
+                            </Text>
+                            {form.allowCustomerPositioning && (
+                              <Text variant="bodySm" tone="subdued" as="p">
+                                Customers can move this — these values just set where their image starts out.
+                              </Text>
+                            )}
+                            <div
+                              style={{
+                                position: 'relative',
+                                width: '100%',
+                                maxWidth: 400,
+                                marginTop: 8,
+                                border: '1px solid #E3E5E4',
+                                borderRadius: 8,
+                                overflow: 'hidden',
+                              }}
+                            >
+                              <img
+                                src={form.previewTemplateUrl}
+                                alt="Mockup template"
+                                style={{ display: 'block', width: '100%', height: 'auto' }}
+                              />
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  left: `${form.previewPlacement.x}%`,
+                                  top: `${form.previewPlacement.y}%`,
+                                  width: `${form.previewPlacement.width}%`,
+                                  height: `${form.previewPlacement.height}%`,
+                                  border: '2px dashed #008060',
+                                  background: 'rgba(0,128,96,0.12)',
+                                  boxSizing: 'border-box',
+                                }}
+                              />
+                            </div>
+
+                            <FormLayout.Group>
+                              <TextField
+                                label="X (%)" type="number" autoComplete="off"
+                                value={String(form.previewPlacement.x)}
+                                onChange={setPlacement('x')}
+                              />
+                              <TextField
+                                label="Y (%)" type="number" autoComplete="off"
+                                value={String(form.previewPlacement.y)}
+                                onChange={setPlacement('y')}
+                              />
+                            </FormLayout.Group>
+                            <FormLayout.Group>
+                              <TextField
+                                label="Width (%)" type="number" autoComplete="off"
+                                value={String(form.previewPlacement.width)}
+                                onChange={setPlacement('width')}
+                              />
+                              <TextField
+                                label="Height (%)" type="number" autoComplete="off"
+                                value={String(form.previewPlacement.height)}
+                                onChange={setPlacement('height')}
+                              />
+                            </FormLayout.Group>
+                          </div>
+                        )}
+                      </BlockStack>
+                    )}
                   </FormLayout>
                 )}
               </div>

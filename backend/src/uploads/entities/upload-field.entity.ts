@@ -100,6 +100,41 @@ export class UploadField {
   @Column({ name: 'enable_rotation', default: false })
   enableRotation: boolean;
 
+  /**
+   * Client-requested feature: when enabled, customers see their uploaded
+   * image composited onto previewTemplateUrl (a merchant-uploaded mockup,
+   * e.g. a blank product photo) before finalizing their upload.
+   */
+  @Column({ name: 'enable_preview', default: false })
+  enablePreview: boolean;
+
+  @Column({ name: 'preview_template_url', length: 1000, nullable: true })
+  previewTemplateUrl: string;
+
+  /** Storage key for the template file — internal, never exposed to the storefront */
+  @Column({ name: 'preview_template_key', length: 500, nullable: true })
+  previewTemplateKey: string;
+
+  /**
+   * Where the customer's image is overlaid on the template, as percentages
+   * (0-100) of the template's width/height — resolution independent.
+   * Shape: { x, y, width, height }
+   */
+  @Column({ type: 'json', name: 'preview_placement', nullable: true })
+  previewPlacement: { x: number; y: number; width: number; height: number };
+
+  /**
+   * Upgrades the static preview into an interactive designer: the customer
+   * can drag/resize/rotate their image on the mockup themselves, instead of
+   * the merchant fixing one placement for everyone.
+   */
+  @Column({ name: 'allow_customer_positioning', default: false })
+  allowCustomerPositioning: boolean;
+
+  /** Lets the customer add their own text (name, message) onto the design. */
+  @Column({ name: 'allow_customer_text', default: false })
+  allowCustomerText: boolean;
+
   @Column({ type: 'json', name: 'conditional_rules', nullable: true })
   conditionalRules: any;
 
