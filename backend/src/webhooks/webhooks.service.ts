@@ -45,14 +45,19 @@ export class WebhooksService {
   }
 
   private async registerViaRest(merchant: Merchant, appUrl: string, accessToken: string): Promise<void> {
+    // NOTE: customers/data_request, customers/redact, and shop/redact are
+    // deliberately NOT included here. Shopify's compliance webhook topics
+    // can only be declared via shopify.app.toml + `shopify app deploy` —
+    // the REST Webhooks API 404s on them at runtime (confirmed in
+    // production logs), and this was previously producing a misleading
+    // ERROR log on every single install even though the compliance
+    // webhooks were already correctly registered via the app config.
+    // See shopify.app.toml's `[[webhooks.subscriptions]] compliance_topics`.
     const webhooks = [
       { topic: 'app/uninstalled',        address: `${appUrl}/api/v1/webhooks/app/uninstalled` },
       { topic: 'orders/create',          address: `${appUrl}/api/v1/webhooks/orders/create` },
       { topic: 'orders/updated',         address: `${appUrl}/api/v1/webhooks/orders/updated` },
       { topic: 'products/update',        address: `${appUrl}/api/v1/webhooks/products/update` },
-      { topic: 'customers/data_request', address: `${appUrl}/api/v1/gdpr/webhooks` },
-      { topic: 'customers/redact',       address: `${appUrl}/api/v1/gdpr/webhooks` },
-      { topic: 'shop/redact',            address: `${appUrl}/api/v1/gdpr/webhooks` },
     ];
 
     for (const webhook of webhooks) {
@@ -82,15 +87,15 @@ export class WebhooksService {
   }
 
   /**
-   * Register webhooks via GraphQL pubSubWebhookSubscriptionCreate mutation.
-   * This is the modern Shopify approach that works without shopify app deploy.
-   * Uses HTTP endpoint subscriptions (not pub/sub) via webhookSubscriptionCreate.
+   * Register webhooks via GraphQL webhookSubscriptionCreate mutation.
+   * Only covers topics that are actually valid for this mutation — the
+   * three compliance topics are NOT valid WebhookSubscriptionTopic enum
+   * values (confirmed: Shopify rejects them with "invalid value" errors)
+   * and, same as the REST method above, are only registerable via
+   * shopify.app.toml + `shopify app deploy`.
    */
   private async registerViaGraphQL(merchant: Merchant, appUrl: string, accessToken: string): Promise<void> {
     const topics = [
-      { topic: 'CUSTOMERS_DATA_REQUEST', address: `${appUrl}/api/v1/gdpr/webhooks` },
-      { topic: 'CUSTOMERS_REDACT',       address: `${appUrl}/api/v1/gdpr/webhooks` },
-      { topic: 'SHOP_REDACT',            address: `${appUrl}/api/v1/gdpr/webhooks` },
       { topic: 'APP_UNINSTALLED',        address: `${appUrl}/api/v1/webhooks/app/uninstalled` },
       { topic: 'ORDERS_CREATE',          address: `${appUrl}/api/v1/webhooks/orders/create` },
     ];
