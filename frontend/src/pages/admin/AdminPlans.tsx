@@ -116,7 +116,7 @@ export function AdminPlans() {
 
       {plans.map(plan => (
         <div key={plan.id} style={{ background: '#fff', border: '1px solid #e1e3e5', borderRadius: 12, marginBottom: 20, overflow: 'hidden' }}>
-          <div style={{ background: plan.name === 'free' ? '#f4f6f8' : plan.name === 'starter' ? '#e3f1df' : '#e8f0fe', padding: '16px 24px', display: 'flex', gap: 12, alignItems: 'center' }}>
+          <div style={{ background: plan.name === 'free' ? '#f4f6f8' : plan.name === 'starter' ? '#e3f1df' : plan.name === 'pro' ? '#e8f0fe' : '#fdf1e3', padding: '16px 24px', display: 'flex', gap: 12, alignItems: 'center' }}>
             <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>{plan.displayName} Plan</h2>
             <span style={{ background: plan.isActive ? '#008060' : '#de3618', color: '#fff', fontSize: 11, padding: '2px 8px', borderRadius: 4 }}>
               {plan.isActive ? 'Active' : 'Inactive'}

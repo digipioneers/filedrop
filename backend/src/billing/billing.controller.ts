@@ -22,8 +22,9 @@ export class BillingController {
 
   @Get('current')
   @ApiOperation({ summary: 'Get current subscription' })
-  getCurrentPlan(@CurrentMerchant() merchant: Merchant) {
-    return this.billingService.getCurrentPlan(merchant.id);
+  async getCurrentPlan(@CurrentMerchant() merchant: Merchant) {
+    const result = await this.billingService.getCurrentPlan(merchant.id);
+    return { ...result, isDevelopmentStore: merchant.isDevelopmentStore };
   }
 
   @Post('subscribe')

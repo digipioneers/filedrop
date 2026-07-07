@@ -9,28 +9,35 @@ import { formatBytes } from '../utils/format';
 
 const PLAN_FEATURES: Record<string, string[]> = {
   free: [
-    '100 uploads/month',
-    '1 GB storage',
-    '10 MB max file size',
-    'Basic file types',
-    'Email support',
+    '250 uploads/month',
+    '2 GB storage',
+    '50 MB max file size',
+    'All file types + image editor',
+    'Product preview',
+    'Free for Shopify development stores',
   ],
   starter: [
-    '1,000 uploads/month',
-    '10 GB storage',
-    '100 MB max file size',
-    'All file types',
-    'Image editor (crop, rotate)',
-    'Priority email support',
+    '500 uploads/month',
+    '5 GB storage',
+    '25 MB max file size',
+    'File & text uploads linked to orders',
+    'Email notifications',
   ],
   pro: [
+    '2,000 uploads/month',
+    '20 GB storage',
+    '100 MB max file size',
+    'Image & text uploads',
+    'Live product preview (t-shirts, mugs, etc.)',
+    'Image editor (crop, rotate)',
+    'Conditional upload logic',
+  ],
+  advanced: [
     'Unlimited uploads',
     '100 GB storage',
     '2 GB max file size',
-    'All file types',
-    'Image editor (crop, rotate)',
-    'Image validation (dimensions, aspect ratio)',
-    'Conditional upload logic',
+    'Everything in Pro',
+    'Custom branding',
     'Priority support + Slack',
   ],
 };
@@ -170,6 +177,17 @@ export function BillingPage() {
   return (
     <Page title="Plan & Billing" subtitle="Choose the right plan for your store">
       <Layout>
+        {currentPlanData?.isDevelopmentStore && (
+          <Layout.Section>
+            <Banner tone="info">
+              This is a Shopify development store, so it's automatically on the free{' '}
+              <strong>Development</strong> plan with full features unlocked for testing. If you
+              want to try the paid plans, upgrading here will use Shopify's test-charge mode — you
+              won't be billed real money on a development store.
+            </Banner>
+          </Layout.Section>
+        )}
+
         {upgradeError && (
           <Layout.Section>
             <Banner tone="critical" onDismiss={() => setUpgradeError(null)}>

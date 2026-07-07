@@ -61,7 +61,12 @@ export class BillingService {
     }
 
     const trialDays = await this.getDefaultTrialDays();
-    const isTestCharge = process.env.SHOPIFY_BILLING_TEST_MODE === 'true';
+    // Global env override still works (e.g. for staging), OR automatically
+    // for any merchant we detected as a development store at install time —
+    // Shopify would reject a real charge against them anyway, but marking
+    // it explicitly lets them actually test the upgrade flow instead of
+    // hitting a confusing billing error.
+    const isTestCharge = process.env.SHOPIFY_BILLING_TEST_MODE === 'true' || merchant.isDevelopmentStore;
 
     // Ask Shopify itself to create the subscription and hand back a real,
     // signed confirmation URL. We must never build this URL ourselves —

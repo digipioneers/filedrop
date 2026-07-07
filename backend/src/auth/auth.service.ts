@@ -156,6 +156,16 @@ export class AuthService {
 
     const shopInfo = await this.fetchShopInfo(shop, token.accessToken);
 
+    // Shopify marks development/partner stores with specific plan_name
+    // values (confirmed via Shopify's own community answers: a standard
+    // dev store shows plan_name "affiliate"; "partner_test" and "staff"
+    // are related partner/test account types). Deliberately NOT including
+    // "trial" here — that's a LIVE store on its normal Shopify trial
+    // period, a genuine future paying customer, not a dev store; treating
+    // it as one would incorrectly waive real billing.
+    const devStorePlanNames = ['affiliate', 'partner_test', 'staff'];
+    const isDevelopmentStore = devStorePlanNames.includes(shopInfo.plan_name);
+
     if (merchant) {
       merchant.accessToken = token.accessToken;
       merchant.refreshToken = token.refreshToken;
@@ -163,6 +173,8 @@ export class AuthService {
       merchant.shopName = shopInfo.name;
       merchant.shopEmail = shopInfo.email;
       merchant.shopCurrency = shopInfo.currency;
+      merchant.shopPlanName = shopInfo.plan_name;
+      merchant.isDevelopmentStore = isDevelopmentStore;
       merchant.isActive = true;
       merchant.uninstalledAt = null;
     } else {
@@ -174,6 +186,8 @@ export class AuthService {
         shopName: shopInfo.name,
         shopEmail: shopInfo.email,
         shopCurrency: shopInfo.currency,
+        shopPlanName: shopInfo.plan_name,
+        isDevelopmentStore: isDevelopmentStore,
         installedAt: new Date(),
         isActive: true,
       });

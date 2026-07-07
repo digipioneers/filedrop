@@ -29,6 +29,19 @@ export class Merchant {
   @Column({ name: 'shop_currency', nullable: true, default: 'USD', length: 10 })
   shopCurrency: string;
 
+  /** Raw plan_name from Shopify's shop.json (e.g. "partner_test", "affiliate", "dev_only") */
+  @Column({ name: 'shop_plan_name', nullable: true, length: 100 })
+  shopPlanName: string;
+
+  /**
+   * True for Shopify development/partner/trial stores. Shopify won't allow
+   * real billing charges against these regardless, so these merchants are
+   * auto-placed on the free "Development" tier, and any subscription
+   * attempt is automatically sent as a test charge.
+   */
+  @Column({ name: 'is_development_store', default: false })
+  isDevelopmentStore: boolean;
+
   @Column({ name: 'shop_timezone', nullable: true, default: 'UTC', length: 100 })
   shopTimezone: string;
 

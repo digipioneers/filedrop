@@ -4,9 +4,10 @@ import {
 } from 'typeorm';
 
 export enum PlanName {
-  FREE = 'free',
-  STARTER = 'starter',
+  FREE = 'free',       // displayed to merchants as "Development"
+  STARTER = 'starter', // displayed to merchants as "Basic"
   PRO = 'pro',
+  ADVANCED = 'advanced',
 }
 
 @Entity('plans')
