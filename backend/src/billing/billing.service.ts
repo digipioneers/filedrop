@@ -6,6 +6,7 @@ import { Subscription, SubscriptionStatus } from './entities/subscription.entity
 import { Plan, PlanName } from '../plans/entities/plan.entity';
 import { Merchant } from '../auth/entities/merchant.entity';
 import { AppSettings } from '../admin/entities/app-settings.entity';
+import { ShopifyTokenService } from '../shopify-token/shopify-token.service';
 
 @Injectable()
 export class BillingService {
@@ -16,6 +17,7 @@ export class BillingService {
     @InjectRepository(Plan) private readonly planRepo: Repository<Plan>,
     @InjectRepository(Merchant) private readonly merchantRepo: Repository<Merchant>,
     @InjectRepository(AppSettings) private readonly appSettingsRepo: Repository<AppSettings>,
+    private readonly shopifyTokenService: ShopifyTokenService,
   ) {}
 
   private async getDefaultTrialDays(): Promise<number> {
@@ -67,6 +69,7 @@ export class BillingService {
     // it explicitly lets them actually test the upgrade flow instead of
     // hitting a confusing billing error.
     const isTestCharge = process.env.SHOPIFY_BILLING_TEST_MODE === 'true' || merchant.isDevelopmentStore;
+    const accessToken = await this.shopifyTokenService.getValidAccessToken(merchant);
 
     // Ask Shopify itself to create the subscription and hand back a real,
     // signed confirmation URL. We must never build this URL ourselves —
@@ -118,7 +121,7 @@ export class BillingService {
         { query: mutation, variables },
         {
           headers: {
-            'X-Shopify-Access-Token': merchant.accessToken,
+            'X-Shopify-Access-Token': accessToken,
             'Content-Type': 'application/json',
           },
           timeout: 15_000,
@@ -204,12 +207,13 @@ export class BillingService {
 
     let response;
     try {
+      const accessToken = await this.shopifyTokenService.getValidAccessToken(merchant);
       response = await axios.post(
         `https://${merchant.shopDomain}/admin/api/2026-07/graphql.json`,
         { query },
         {
           headers: {
-            'X-Shopify-Access-Token': merchant.accessToken,
+            'X-Shopify-Access-Token': accessToken,
             'Content-Type': 'application/json',
           },
         },

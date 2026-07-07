@@ -7,6 +7,7 @@ import { Upload } from '../uploads/entities/upload.entity';
 import { Merchant } from '../auth/entities/merchant.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ProductsService } from '../products/products.service';
+import { ShopifyTokenService } from '../shopify-token/shopify-token.service';
 
 @Injectable()
 export class WebhooksService {
@@ -20,6 +21,7 @@ export class WebhooksService {
     private readonly notificationsService: NotificationsService,
     private readonly productsService: ProductsService,
     private readonly configService: ConfigService,
+    private readonly shopifyTokenService: ShopifyTokenService,
   ) {}
 
   /**
@@ -35,12 +37,14 @@ export class WebhooksService {
       return;
     }
 
+    const accessToken = await this.shopifyTokenService.getValidAccessToken(merchant);
+
     // Register via both REST (per-merchant) and GraphQL (app-level subscriptions)
-    await this.registerViaRest(merchant, appUrl);
-    await this.registerViaGraphQL(merchant, appUrl);
+    await this.registerViaRest(merchant, appUrl, accessToken);
+    await this.registerViaGraphQL(merchant, appUrl, accessToken);
   }
 
-  private async registerViaRest(merchant: Merchant, appUrl: string): Promise<void> {
+  private async registerViaRest(merchant: Merchant, appUrl: string, accessToken: string): Promise<void> {
     const webhooks = [
       { topic: 'app/uninstalled',        address: `${appUrl}/api/v1/webhooks/app/uninstalled` },
       { topic: 'orders/create',          address: `${appUrl}/api/v1/webhooks/orders/create` },
@@ -58,7 +62,7 @@ export class WebhooksService {
           { webhook: { topic: webhook.topic, address: webhook.address, format: 'json' } },
           {
             headers: {
-              'X-Shopify-Access-Token': merchant.accessToken,
+              'X-Shopify-Access-Token': accessToken,
               'Content-Type': 'application/json',
             },
             timeout: 10_000,
@@ -82,7 +86,7 @@ export class WebhooksService {
    * This is the modern Shopify approach that works without shopify app deploy.
    * Uses HTTP endpoint subscriptions (not pub/sub) via webhookSubscriptionCreate.
    */
-  private async registerViaGraphQL(merchant: Merchant, appUrl: string): Promise<void> {
+  private async registerViaGraphQL(merchant: Merchant, appUrl: string, accessToken: string): Promise<void> {
     const topics = [
       { topic: 'CUSTOMERS_DATA_REQUEST', address: `${appUrl}/api/v1/gdpr/webhooks` },
       { topic: 'CUSTOMERS_REDACT',       address: `${appUrl}/api/v1/gdpr/webhooks` },
@@ -112,7 +116,7 @@ export class WebhooksService {
           { query: mutation },
           {
             headers: {
-              'X-Shopify-Access-Token': merchant.accessToken,
+              'X-Shopify-Access-Token': accessToken,
               'Content-Type': 'application/json',
             },
             timeout: 10_000,
@@ -199,6 +203,7 @@ export class WebhooksService {
     uploadCount: number,
   ): Promise<void> {
     try {
+      const accessToken = await this.shopifyTokenService.getValidAccessToken(merchant);
       const note = `Customer uploaded ${uploadCount} file${uploadCount > 1 ? 's' : ''} via Custom File Upload Pro.`;
       await axios.post(
         `https://${merchant.shopDomain}/admin/api/2026-07/orders/${shopifyOrderId}/metafields.json`,
@@ -212,7 +217,7 @@ export class WebhooksService {
         },
         {
           headers: {
-            'X-Shopify-Access-Token': merchant.accessToken,
+            'X-Shopify-Access-Token': accessToken,
             'Content-Type': 'application/json',
           },
         },
@@ -221,7 +226,7 @@ export class WebhooksService {
       // Also write to order notes via order update
       const orderRes = await axios.get(
         `https://${merchant.shopDomain}/admin/api/2026-07/orders/${shopifyOrderId}.json?fields=note`,
-        { headers: { 'X-Shopify-Access-Token': merchant.accessToken } },
+        { headers: { 'X-Shopify-Access-Token': accessToken } },
       );
       const existingNote = orderRes.data?.order?.note ?? '';
       const updatedNote = existingNote
@@ -233,7 +238,7 @@ export class WebhooksService {
         { order: { id: shopifyOrderId, note: updatedNote } },
         {
           headers: {
-            'X-Shopify-Access-Token': merchant.accessToken,
+            'X-Shopify-Access-Token': accessToken,
             'Content-Type': 'application/json',
           },
         },

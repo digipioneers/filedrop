@@ -4,6 +4,7 @@ import { Repository, Like } from 'typeorm';
 import axios from 'axios';
 import { Product } from './entities/product.entity';
 import { Merchant } from '../auth/entities/merchant.entity';
+import { ShopifyTokenService } from '../shopify-token/shopify-token.service';
 
 @Injectable()
 export class ProductsService {
@@ -14,6 +15,7 @@ export class ProductsService {
     private readonly productRepo: Repository<Product>,
     @InjectRepository(Merchant)
     private readonly merchantRepo: Repository<Merchant>,
+    private readonly shopifyTokenService: ShopifyTokenService,
   ) {}
 
   /** Fetch all products from Shopify and cache locally. */
@@ -23,10 +25,11 @@ export class ProductsService {
 
     let synced = 0;
     let url = `https://${merchant.shopDomain}/admin/api/2026-07/products.json?limit=250&fields=id,title,handle,product_type,tags,variants,image,collections`;
+    const accessToken = await this.shopifyTokenService.getValidAccessToken(merchant);
 
     while (url) {
       const res = await axios.get(url, {
-        headers: { 'X-Shopify-Access-Token': merchant.accessToken },
+        headers: { 'X-Shopify-Access-Token': accessToken },
       });
 
       const products: any[] = res.data.products ?? [];
@@ -34,7 +37,7 @@ export class ProductsService {
       for (const p of products) {
         const collections = await this.fetchCollectionsForProduct(
           merchant.shopDomain,
-          merchant.accessToken,
+          accessToken,
           p.id,
         );
 
@@ -85,13 +88,14 @@ export class ProductsService {
     if (!merchant) return [];
 
     try {
+      const accessToken = await this.shopifyTokenService.getValidAccessToken(merchant);
       const res = await axios.get(
         `https://${merchant.shopDomain}/admin/api/2026-07/custom_collections.json?limit=250`,
-        { headers: { 'X-Shopify-Access-Token': merchant.accessToken } },
+        { headers: { 'X-Shopify-Access-Token': accessToken } },
       );
       const smart = await axios.get(
         `https://${merchant.shopDomain}/admin/api/2026-07/smart_collections.json?limit=250`,
-        { headers: { 'X-Shopify-Access-Token': merchant.accessToken } },
+        { headers: { 'X-Shopify-Access-Token': accessToken } },
       );
       return [
         ...(res.data.custom_collections ?? []),
@@ -111,7 +115,11 @@ export class ProductsService {
 
     const merchant = await this.merchantRepo.findOne({ where: { id: merchantId } });
     const collections = merchant
-      ? await this.fetchCollectionsForProduct(merchant.shopDomain, merchant.accessToken, shopifyProduct.id)
+      ? await this.fetchCollectionsForProduct(
+          merchant.shopDomain,
+          await this.shopifyTokenService.getValidAccessToken(merchant),
+          shopifyProduct.id,
+        )
       : existing.collections;
 
     await this.productRepo.save({

@@ -7,6 +7,7 @@ import { WebhooksController } from './webhooks.controller';
 import { WebhooksService } from './webhooks.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ProductsModule } from '../products/products.module';
+import { ShopifyTokenModule } from '../shopify-token/shopify-token.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { ProductsModule } from '../products/products.module';
     TypeOrmModule.forFeature([Upload, Merchant]),
     NotificationsModule,
     ProductsModule,
+    ShopifyTokenModule,
   ],
   controllers: [WebhooksController],
   providers: [WebhooksService],
