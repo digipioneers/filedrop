@@ -1,6 +1,7 @@
 import React from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { Frame, Navigation, TopBar } from '@shopify/polaris';
+import { ErrorBoundary } from '../ErrorBoundary';
 import {
   HomeIcon,
   ArrowUpIcon,
@@ -95,7 +96,9 @@ export function AppLayout() {
       showMobileNavigation={mobileNavActive}
       onNavigationDismiss={() => setMobileNavActive(false)}
     >
-      <Outlet />
+      <ErrorBoundary>
+        <Outlet />
+      </ErrorBoundary>
     </Frame>
   );
 }

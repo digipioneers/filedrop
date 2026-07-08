@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Page, Card, ResourceList, ResourceItem, Text,
   Badge, Filters, Select, EmptyState, Pagination,
@@ -22,6 +22,15 @@ const STATUS_MAP: Record<string, any> = {
   failed:   { status: 'warning',   label: 'Failed' },
 };
 
+// Stable reference — ResourceList internally memoizes an accessibility
+// label based on this object, and a well-documented, long-standing Polaris
+// bug (reported against many unrelated apps since 2020: "Error in
+// translation for key 'Polaris.ResourceList.a11yCheckboxSelectAllMultiple'.
+// No replacement found for key 'itemsLength'") is more likely to surface
+// when resourceName is a fresh object literal on every render. Hoisting it
+// out removes that as a variable entirely.
+const RESOURCE_NAME = { singular: 'upload', plural: 'uploads' };
+
 export default function UploadsPage() {
   const qc = useQueryClient();
   const [page, setPage] = useState(1);
@@ -40,7 +49,9 @@ export default function UploadsPage() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['uploads'] }); setDeleteId(null); },
   });
 
-  const uploads = (data as any)?.data ?? [];
+  // Memoized so `items` also has a stable reference across renders when the
+  // underlying data hasn't actually changed (same reasoning as above).
+  const uploads = useMemo(() => (data as any)?.data ?? [], [data]);
   const total = (data as any)?.total ?? 0;
   const pages = Math.ceil(total / 25);
 
@@ -48,7 +59,7 @@ export default function UploadsPage() {
     <Page title="All Uploads" subtitle={`${total} files`}>
       <Card>
         <ResourceList
-          resourceName={{ singular: 'upload', plural: 'uploads' }}
+          resourceName={RESOURCE_NAME}
           items={uploads}
           loading={isLoading}
           filterControl={
@@ -74,7 +85,7 @@ export default function UploadsPage() {
             const badge = STATUS_MAP[upload.status] || STATUS_MAP.pending;
             return (
               <ResourceItem id={upload.id} onClick={() => {}}
-                shortcutActions={[{ content: 'Delete', destructive: true, onAction: () => setDeleteId(upload.id) }]}
+                shortcutActions={[{ content: 'Delete', onAction: () => setDeleteId(upload.id) }]}
               >
                 <InlineStack gap="400" align="space-between" blockAlign="center">
                   <BlockStack gap="100">

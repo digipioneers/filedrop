@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+
 import {
   Page, Layout, Card, ResourceList, ResourceItem, Text,
   Badge, Button, ButtonGroup, EmptyState, Filters,
@@ -7,6 +8,8 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../utils/api';
+
+const RESOURCE_NAME = { singular: 'upload field', plural: 'upload fields' };
 
 const FIELD_TYPE_LABELS: Record<string, string> = {
   image: 'Image Upload',
@@ -100,7 +103,7 @@ export function UploadFieldsPage() {
                 />
               </div>
               <ResourceList
-                resourceName={{ singular: 'upload field', plural: 'upload fields' }}
+                resourceName={RESOURCE_NAME}
                 items={fields}
                 renderItem={(field: any) => (
                   <ResourceItem
