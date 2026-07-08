@@ -37,18 +37,26 @@ const queryClient = new QueryClient({
  * Workaround for a long-standing, unresolved upstream Polaris bug
  * (reported against many unrelated apps since 2020 — Shopify/polaris
  * issues #2991, #3144, and others) where ResourceList's internal
- * accessibility-label computation intermittently calls its i18n.translate()
- * with the `itemsLength` replacement missing, throwing an uncaught render
- * error: "Error in translation for key
- * 'Polaris.ResourceList.a11yCheckboxSelectAllMultiple'. No replacement
- * found for key 'itemsLength'."
+ * accessibility/status label computations intermittently call
+ * i18n.translate() with a "count" replacement (itemsLength, itemsCount,
+ * totalItemsCount, selectedItemsCount) missing, throwing an uncaught
+ * render error. This has now been observed for TWO different keys in
+ * production (a11yCheckboxSelectAllMultiple, then showing) — a systemic
+ * pattern, not an isolated one-off — so every ResourceList key that uses
+ * one of these count-type placeholders is hardened here, not just the
+ * ones that happened to crash first.
  *
  * Polaris's translate() only requires replacement values for placeholders
  * that actually appear in the template string — it doesn't care about
- * extra/unused replacement keys. So overriding these templates to drop
- * `{itemsLength}` entirely makes the interpolation succeed regardless of
- * whether Polaris's internal code happens to pass it or not, sidestepping
- * the bug without needing to pin its exact trigger.
+ * extra/unused replacement keys. Removing the fragile count placeholders
+ * from these templates makes the interpolation succeed regardless of
+ * whether Polaris's internal code happens to pass them or not.
+ *
+ * Trade-off: these labels lose the numeric count (e.g. "Showing uploads"
+ * instead of "Showing 20 uploads", "Select all uploads" instead of
+ * "Select all 20 uploads"). That's a real, minor UX/accessibility
+ * regression, accepted deliberately in exchange for the page never
+ * crashing over it.
  */
 const translationsOverride = {
   ...enTranslations,
@@ -56,6 +64,9 @@ const translationsOverride = {
     ...enTranslations.Polaris,
     ResourceList: {
       ...enTranslations.Polaris.ResourceList,
+      showing: 'Showing {resource}',
+      showingTotalCount: 'Showing {resource}',
+      selected: 'Selected',
       allItemsSelected: 'All {resourceNamePlural} in your store are selected',
       allFilteredItemsSelected: 'All {resourceNamePlural} in this filter are selected',
       selectAllItems: 'Select all {resourceNamePlural} in your store',
