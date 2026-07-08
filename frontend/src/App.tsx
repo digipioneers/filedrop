@@ -34,6 +34,39 @@ const queryClient = new QueryClient({
 });
 
 /**
+ * Workaround for a long-standing, unresolved upstream Polaris bug
+ * (reported against many unrelated apps since 2020 — Shopify/polaris
+ * issues #2991, #3144, and others) where ResourceList's internal
+ * accessibility-label computation intermittently calls its i18n.translate()
+ * with the `itemsLength` replacement missing, throwing an uncaught render
+ * error: "Error in translation for key
+ * 'Polaris.ResourceList.a11yCheckboxSelectAllMultiple'. No replacement
+ * found for key 'itemsLength'."
+ *
+ * Polaris's translate() only requires replacement values for placeholders
+ * that actually appear in the template string — it doesn't care about
+ * extra/unused replacement keys. So overriding these templates to drop
+ * `{itemsLength}` entirely makes the interpolation succeed regardless of
+ * whether Polaris's internal code happens to pass it or not, sidestepping
+ * the bug without needing to pin its exact trigger.
+ */
+const translationsOverride = {
+  ...enTranslations,
+  Polaris: {
+    ...enTranslations.Polaris,
+    ResourceList: {
+      ...enTranslations.Polaris.ResourceList,
+      allItemsSelected: 'All {resourceNamePlural} in your store are selected',
+      allFilteredItemsSelected: 'All {resourceNamePlural} in this filter are selected',
+      selectAllItems: 'Select all {resourceNamePlural} in your store',
+      selectAllFilteredItems: 'Select all {resourceNamePlural} in this filter',
+      a11yCheckboxDeselectAllMultiple: 'Deselect all {resourceNamePlural}',
+      a11yCheckboxSelectAllMultiple: 'Select all {resourceNamePlural}',
+    },
+  },
+};
+
+/**
  * Persists `shop`/`host` from the URL so the API client (utils/api.ts) can
  * still figure out which shop to redirect to for re-install if a session
  * token request ever fails. App Bridge (loaded via CDN in index.html) reads
@@ -68,7 +101,7 @@ function AdminRoute() {
 
 function AppWithBridge() {
   return (
-    <AppProvider i18n={enTranslations}>
+    <AppProvider i18n={translationsOverride}>
       <ShopContextHandler>
         <AppRoutes />
       </ShopContextHandler>
