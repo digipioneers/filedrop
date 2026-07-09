@@ -1,8 +1,8 @@
-api_version = "2024-01"
+api_version = "2026-07"
 
 [[extensions]]
 type = "ui_extension"
-name = "Filedrop – Order Files"
+name = "Custom File Upload Pro – Order Files"
 handle = "custom-file-upload-order"
 uid = "18ad7b43-7be1-27bc-68fd-e182e3edec323ca0dd31"
 
