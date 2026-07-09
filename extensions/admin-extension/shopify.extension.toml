@@ -5,6 +5,6 @@ type = "ui_extension"
 name = "Custom File Upload Pro – Order Files"
 handle = "custom-file-upload-order"
 
-  [extensions.targeting]
+  [[extensions.targeting]]
   module = "./src/OrderUploads.tsx"
   target = "admin.order-details.block.render"
