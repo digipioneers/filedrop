@@ -21,7 +21,13 @@ export class Plan {
   @Column({ name: 'display_name', length: 100 })
   displayName: string;
 
-  @Column({ name: 'monthly_price', type: 'decimal', precision: 10, scale: 2, default: 0 })
+  // Same TypeORM decimal-as-string quirk as UploadField's file-size columns —
+  // without this transformer, monthlyPrice comes back as a string like "7.99"
+  // instead of a number, which breaks any numeric comparison/math downstream.
+  @Column({
+    name: 'monthly_price', type: 'decimal', precision: 10, scale: 2, default: 0,
+    transformer: { to: (v: number) => v, from: (v: string) => (v === null ? null : parseFloat(v)) },
+  })
   monthlyPrice: number;
 
   @Column({ name: 'uploads_per_month', default: 100 })

@@ -97,7 +97,8 @@ export function UploadFieldFormPage() {
       navigate('/app/fields');
     },
     onError: (err: any) => {
-      setError(err.response?.data?.message ?? 'Failed to save upload field');
+      const msg = err.response?.data?.message;
+      setError(Array.isArray(msg) ? msg.join('. ') : (msg ?? 'Failed to save upload field'));
     },
   });
 
@@ -109,6 +110,8 @@ export function UploadFieldFormPage() {
     }
     saveMutation.mutate({
       ...form,
+      maxFileSizeMb: form.maxFileSizeMb !== '' && form.maxFileSizeMb != null ? Number(form.maxFileSizeMb) : 10,
+      minFileSizeMb: form.minFileSizeMb !== '' && form.minFileSizeMb != null ? Number(form.minFileSizeMb) : 0,
       minWidth: form.minWidth ? parseInt(String(form.minWidth)) : undefined,
       maxWidth: form.maxWidth ? parseInt(String(form.maxWidth)) : undefined,
       minHeight: form.minHeight ? parseInt(String(form.minHeight)) : undefined,
@@ -134,7 +137,8 @@ export function UploadFieldFormPage() {
       queryClient.invalidateQueries({ queryKey: ['upload-field', id] });
     },
     onError: (err: any) => {
-      setError(err.response?.data?.message ?? 'Failed to upload preview template');
+      const msg = err.response?.data?.message;
+      setError(Array.isArray(msg) ? msg.join('. ') : (msg ?? 'Failed to upload preview template'));
     },
   });
 

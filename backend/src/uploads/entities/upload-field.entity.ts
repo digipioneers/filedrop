@@ -64,10 +64,20 @@ export class UploadField {
   @Column({ name: 'button_text', length: 100, default: 'Choose File' })
   buttonText: string;
 
-  @Column({ name: 'max_file_size_mb', type: 'decimal', precision: 10, scale: 2, default: 10 })
+  // TypeORM/MySQL returns 'decimal' columns as strings by default (to avoid
+  // floating-point precision loss) — the transformer here converts them back
+  // to real JS numbers on read, so downstream code (and class-validator's
+  // @IsNumber() on the DTOs) doesn't silently receive a string typed as `number`.
+  @Column({
+    name: 'max_file_size_mb', type: 'decimal', precision: 10, scale: 2, default: 10,
+    transformer: { to: (v: number) => v, from: (v: string) => (v === null ? null : parseFloat(v)) },
+  })
   maxFileSizeMb: number;
 
-  @Column({ name: 'min_file_size_mb', type: 'decimal', precision: 10, scale: 2, default: 0 })
+  @Column({
+    name: 'min_file_size_mb', type: 'decimal', precision: 10, scale: 2, default: 0,
+    transformer: { to: (v: number) => v, from: (v: string) => (v === null ? null : parseFloat(v)) },
+  })
   minFileSizeMb: number;
 
   @Column({ name: 'max_files', default: 1 })
