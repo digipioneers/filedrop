@@ -13,7 +13,7 @@ import {
   Box,
   Icon,
   Link,
-  Spinner,
+  ProgressIndicator,
 } from '@shopify/ui-extensions-react/admin';
 
 const TARGET = 'admin.order-details.block.render';
@@ -114,7 +114,7 @@ function OrderUploadsBlock() {
     return (
       <AdminBlock title="Customer Uploaded Files">
         <InlineStack inlineAlignment="center">
-          <Spinner />
+          <ProgressIndicator />
           <Text>Loading files...</Text>
         </InlineStack>
       </AdminBlock>
