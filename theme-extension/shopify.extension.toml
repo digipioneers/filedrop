@@ -2,5 +2,5 @@ api_version = "2024-01"
 
 [[extensions]]
 type = "theme"
-name = "Custom File Upload Pro Widget"
-handle = "custom-file-upload-pro"
+name = "Filedrop"
+handle = "filedrop"
