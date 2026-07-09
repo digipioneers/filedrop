@@ -37,8 +37,3 @@ api_version = "2026-07"
 [build]
 automatically_update_urls_on_dev = true
 dev_store_url = "practice01-knvjgcjw.myshopify.com"
-# theme-extension/ and admin-extension/ live at the repo root instead of the
-# default extensions/ folder Shopify CLI scans by default — without this,
-# `shopify app deploy` never discovers or deploys them at all, which is why
-# the Filedrop block never appeared in the theme editor's "Apps" list.
-extension_directories = ["theme-extension", "admin-extension"]
