@@ -38,7 +38,7 @@ export function InstallPage({ shopifyApiKey }: InstallPageProps) {
       }}>
         <div style={{ fontSize: 48, marginBottom: 16 }}>📁</div>
         <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8, color: '#1a1a1a' }}>
-          Custom File Upload Pro
+          Filedrop
         </h1>
         <p style={{ color: '#666', marginBottom: 32, lineHeight: 1.6 }}>
           Let customers upload files — images, PDFs, videos — right on your product pages.

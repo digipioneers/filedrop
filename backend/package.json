@@ -1,7 +1,7 @@
 {
   "name": "cfup-backend",
   "version": "1.0.0",
-  "description": "Custom File Upload Pro \u2014 NestJS backend (no AWS required)",
+  "description": "Filedrop \u2014 NestJS backend (no AWS required)",
   "scripts": {
     "build": "npx nest build",
     "start": "node dist/main",

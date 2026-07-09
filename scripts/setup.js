@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Custom File Upload Pro — Interactive Setup Wizard
+ * Filedrop — Interactive Setup Wizard
  * Run: node scripts/setup.js
  * Writes backend/.env with all required values. No AWS needed.
  */
@@ -23,7 +23,7 @@ const choose = async (q, opts) => {
 
 async function main() {
   console.log('\n╔══════════════════════════════════════════════════╗');
-  console.log('║   Custom File Upload Pro — Setup Wizard          ║');
+  console.log('║   Filedrop — Setup Wizard          ║');
   console.log('║   No AWS required!                               ║');
   console.log('╚══════════════════════════════════════════════════╝\n');
   console.log('You need:');
@@ -113,7 +113,7 @@ async function main() {
   }
 
   // Write .env.prod
-  const env = `# Custom File Upload Pro — Production Config
+  const env = `# Filedrop — Production Config
 # Generated ${new Date().toISOString()}
 
 NODE_ENV=production

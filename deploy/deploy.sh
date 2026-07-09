@@ -15,7 +15,7 @@ info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║   Custom File Upload Pro — VPS Deploy                ║"
+echo "║   Filedrop — VPS Deploy                ║"
 echo "║   Node.js + PM2 + Caddy + MySQL + MinIO              ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""

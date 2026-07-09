@@ -14,7 +14,7 @@ export class AppSettings {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'app_name', length: 255, default: 'Custom File Upload Pro' })
+  @Column({ name: 'app_name', length: 255, default: 'Filedrop' })
   appName: string;
 
   @Column({ name: 'support_email', length: 255, default: 'support@yourapp.com' })

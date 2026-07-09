@@ -7,7 +7,7 @@ export class AddAppSettingsTable1700300000000 implements MigrationInterface {
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS \`app_settings\` (
         \`id\`                        CHAR(36)     NOT NULL DEFAULT (UUID()),
-        \`app_name\`                  VARCHAR(255) NOT NULL DEFAULT 'Custom File Upload Pro',
+        \`app_name\`                  VARCHAR(255) NOT NULL DEFAULT 'Filedrop',
         \`support_email\`             VARCHAR(255) NOT NULL DEFAULT 'support@yourapp.com',
         \`max_free_storage_gb\`       INT          NOT NULL DEFAULT 1,
         \`default_trial_days\`        INT          NOT NULL DEFAULT 14,

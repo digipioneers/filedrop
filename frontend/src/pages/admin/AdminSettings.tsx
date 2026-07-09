@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { API_URL as BACKEND } from '../../utils/config';
 
 export function AdminSettings() {
-  const [settings, setSettings] = useState<any>({ appName: 'Custom File Upload Pro', supportEmail: '', defaultTrialDays: 14, maintenanceMode: false, allowNewRegistrations: true });
+  const [settings, setSettings] = useState<any>({ appName: 'Filedrop', supportEmail: '', defaultTrialDays: 14, maintenanceMode: false, allowNewRegistrations: true });
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
   const adminKey = localStorage.getItem('admin_key') || '';

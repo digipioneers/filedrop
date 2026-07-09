@@ -209,7 +209,7 @@ export class WebhooksService {
   ): Promise<void> {
     try {
       const accessToken = await this.shopifyTokenService.getValidAccessToken(merchant);
-      const note = `Customer uploaded ${uploadCount} file${uploadCount > 1 ? 's' : ''} via Custom File Upload Pro.`;
+      const note = `Customer uploaded ${uploadCount} file${uploadCount > 1 ? 's' : ''} via Filedrop.`;
       await axios.post(
         `https://${merchant.shopDomain}/admin/api/2026-07/orders/${shopifyOrderId}/metafields.json`,
         {

@@ -39,7 +39,7 @@ export class AppController {
 
     // No shop param — return basic info
     return res.json({
-      name: 'Custom File Upload Pro',
+      name: 'Filedrop',
       status: 'running',
       api: '/api/v1',
       health: '/api/v1/health',

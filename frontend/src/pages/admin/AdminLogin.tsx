@@ -43,7 +43,7 @@ export function AdminLogin({ onLogin }: { onLogin: () => void }) {
             Admin Panel
           </h1>
           <p style={{ color: '#888', margin: '8px 0 0', fontSize: 14 }}>
-            Custom File Upload Pro
+            Filedrop
           </p>
         </div>
 

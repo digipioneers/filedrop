@@ -1,5 +1,5 @@
 =========================================================
-  CUSTOM FILE UPLOAD PRO — COMMAND REFERENCE
+  Filedrop — COMMAND REFERENCE
   Node.js + PM2 + Caddy + MySQL + MinIO (no AWS, no Docker)
 =========================================================
 

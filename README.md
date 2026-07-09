@@ -1,4 +1,4 @@
-# Custom File Upload Pro — Shopify App
+# Filedrop — Shopify App
 
 A production-ready Shopify app for collecting customer files during product purchases. Comparable to Uploadery. Built for Shopify compliant.
 
