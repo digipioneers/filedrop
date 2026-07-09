@@ -26,7 +26,7 @@
       <button id="cfup-editor-close" style="background:none;border:none;font-size:22px;cursor:pointer;color:#555;">✕</button>
     </div>
     <div style="position:relative;max-height:420px;overflow:hidden;border-radius:8px;background:#111;">
-      <img id="cfup-editor-img" src="" alt="Edit" style="max-width:100%;display:block;" />
+      <img id="cfup-editor-img" src="" alt="Edit" width="800" height="600" style="max-width:100%;display:block;" />
     </div>
     <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
       <button class="cfup-editor-btn" id="cfup-rotate-left" title="Rotate Left">↺ Rotate Left</button>
@@ -90,8 +90,8 @@
 
 
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.css" />
-<script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js" defer></script>
 
 <style>
   :root {
@@ -1006,7 +1006,7 @@
   "target": "section",
   "settings": [
     {
-      "type": "url",
+      "type": "text",
       "id": "api_url",
       "label": "App API URL",
       "default": "https://filedrop-production-6d21.up.railway.app/api/v1"
