@@ -46,7 +46,11 @@ export default function UploadsPage() {
 
   const { mutateAsync: del, isPending: deleting } = useMutation({
     mutationFn: (id: string) => api.delete(`/uploads/${id}`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['uploads'] }); setDeleteId(null); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['uploads'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+      setDeleteId(null);
+    },
   });
 
   // Memoized so `items` also has a stable reference across renders when the
