@@ -23,13 +23,13 @@ export default function OrdersPage() {
 
   const { data, isLoading } = useQuery({
     queryKey: ['orders', page],
-    queryFn: () => api.get('/orders', { params: { page, limit: 20 } }).then(r => r.data),
+    queryFn: () => api.get('/orders', { params: { page, limit: 20 } }).then(r => r.data.data),
     placeholderData: (prev: any) => prev,
   } as any);
 
   const { data: detail, isLoading: loadingDetail } = useQuery({
     queryKey: ['order-detail', orderId],
-    queryFn: () => api.get(`/orders/${orderId}/uploads`).then(r => r.data),
+    queryFn: () => api.get(`/orders/${orderId}/uploads`).then(r => r.data.data),
     enabled: !!orderId,
   } as any);
 
