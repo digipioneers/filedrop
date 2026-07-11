@@ -11,6 +11,7 @@ import {
   BadRequestException,
   UnauthorizedException,
   Param,
+  Res,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -56,6 +57,22 @@ export class StorefrontController {
   @ApiOperation({ summary: 'Get public storefront settings' })
   getSettings(@Param('merchantId') merchantId: string) {
     return this.storefrontService.getPublicSettings(merchantId);
+  }
+
+  /**
+   * GET /storefront/preview-template/:fieldId
+   * Serves the merchant's mockup image for the product-preview feature.
+   * Public/unauthenticated — this is a template photo, not customer data,
+   * and needs to load directly in the storefront widget's <canvas> for
+   * anonymous shoppers.
+   */
+  @Get('preview-template/:fieldId')
+  @ApiOperation({ summary: 'Get the preview template image for a field (public)' })
+  async getPreviewTemplate(@Param('fieldId') fieldId: string, @Res() res: any) {
+    const { buffer, mimeType } = await this.storefrontService.getPreviewTemplateFile(fieldId);
+    res.set('Content-Type', mimeType);
+    res.set('Cache-Control', 'public, max-age=86400'); // template rarely changes; cache a day
+    res.send(buffer);
   }
 
   /**
