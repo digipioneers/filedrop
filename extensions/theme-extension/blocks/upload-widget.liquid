@@ -65,7 +65,7 @@
 
 <!-- Interactive designer: customer drags/resizes/rotates their image and can add text -->
 <div id="cfup-designer-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.82);z-index:99999;align-items:center;justify-content:center;flex-direction:column;">
-  <div style="background:#fff;border-radius:12px;max-width:720px;width:calc(100% - 32px);padding:20px;box-shadow:0 24px 64px rgba(0,0,0,.4);">
+  <div style="background:#fff;border-radius:12px;max-width:720px;width:calc(100% - 32px);max-height:90vh;overflow-y:auto;padding:20px;box-shadow:0 24px 64px rgba(0,0,0,.4);">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <strong style="font-size:16px;">Design Your Product</strong>
       <button id="cfup-designer-close" style="background:none;border:none;font-size:22px;cursor:pointer;color:#555;">✕</button>
@@ -481,7 +481,11 @@
     templateImg.crossOrigin = 'anonymous';
     templateImg.onload = () => {
       const maxW = Math.min(640, window.innerWidth - 64);
-      const scale = Math.min(1, maxW / templateImg.naturalWidth);
+      // Leave room for the modal's header (~50px), toolbar (~70px), and
+      // padding (~80px) so the canvas itself doesn't force the whole
+      // modal past the viewport on tall mockup images (e.g. a snowboard).
+      const maxH = Math.max(300, window.innerHeight * 0.9 - 200);
+      const scale = Math.min(1, maxW / templateImg.naturalWidth, maxH / templateImg.naturalHeight);
       const canvasW = Math.round(templateImg.naturalWidth * scale);
       const canvasH = Math.round(templateImg.naturalHeight * scale);
 
