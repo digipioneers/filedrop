@@ -60,6 +60,38 @@ export class UploadsService {
     await this.fieldRepo.remove(field);
   }
 
+  /**
+   * Merchant uploads the mockup/template image for the product-preview
+   * feature. Stored privately like any other file, but served back out
+   * through a public, unauthenticated proxy route (see
+   * StorefrontController.getPreviewTemplate) since the storefront widget
+   * needs to load it directly in an <img>/<canvas> for anonymous customers.
+   */  async uploadPreviewTemplate(merchantId: string, fieldId: string, file: any): Promise<UploadField> {
+    const field = await this.findField(merchantId, fieldId);
+
+    if (!file) throw new BadRequestException('No file provided');
+    const { valid, detectedMime } = this.securityService.validateMimeType(file.buffer, 'image');
+    if (!valid) {
+      throw new BadRequestException(`Preview template must be an image file (detected: ${detectedMime})`);
+    }
+
+    const ext = (detectedMime.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+    const key = `templates/${merchantId}/${fieldId}-${Date.now()}.${ext}`;
+    await this.storageService.uploadFile(key, file.buffer, detectedMime);
+
+    const appUrl = process.env.APP_URL || '';
+    field.previewTemplateKey = key;
+    field.previewTemplateUrl = `${appUrl}/api/v1/storefront/preview-template/${fieldId}`;
+    field.enablePreview = true;
+    if (!field.previewPlacement) {
+      // Sensible default placement so merchants see something immediately
+      // rather than an unpositioned overlay: centered, half the template size.
+      field.previewPlacement = { x: 25, y: 25, width: 50, height: 50 };
+    }
+
+    return this.fieldRepo.save(field);
+  }
+
   async getFieldsForProduct(
     shopDomain: string,
     productId: string,

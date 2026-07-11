@@ -73,6 +73,29 @@ export class UploadsController {
     return this.uploadsService.deleteField(req.user.id, id);
   }
 
+  /**
+   * POST /api/v1/uploads/fields/:id/preview-template
+   * Merchant uploads the mockup/template image (e.g. a blank product photo)
+   * that customer images get composited onto for the product-preview feature.
+   */
+  @Post('fields/:id/preview-template')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10MB — this is a merchant-side template image, not a customer upload
+    }),
+  )
+  @ApiOperation({ summary: 'Upload the preview template image for a field' })
+  @ApiConsumes('multipart/form-data')
+  uploadPreviewTemplate(
+    @Request() req,
+    @Param('id') id: string,
+    @UploadedFile() file: any,
+  ) {
+    return this.uploadsService.uploadPreviewTemplate(req.user.id, id, file);
+  }
+
   // ─── Storefront API (public — called from theme extension) ─────────────────
 
   @Get('fields/storefront')
