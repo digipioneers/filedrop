@@ -848,7 +848,8 @@
         const variantId = widget.dataset.variantId;
         if (variantId) formData.append('variantId', variantId);
         formData.append('uploadFieldId', field.id);
-        formData.append('cartToken', getCartToken());
+        const cartToken = await getCartToken();
+        if (cartToken) formData.append('cartToken', cartToken);
 
         const xhr = new XMLHttpRequest();
         xhr.open('POST', `${API_URL}/storefront/upload`);
@@ -903,7 +904,8 @@
         try {
           const delUrl = new URL(`${API_URL}/storefront/upload/${uploadId}`);
           delUrl.searchParams.set('merchantId', SHOP);
-          delUrl.searchParams.set('cartToken', getCartToken());
+          const cartTokenForDelete = await getCartToken();
+          if (cartTokenForDelete) delUrl.searchParams.set('cartToken', cartTokenForDelete);
           await fetch(delUrl.toString(), { method: 'DELETE' });
         } catch { /* best-effort */ }
         const idx = idsArr.indexOf(uploadId);
@@ -979,9 +981,42 @@
 
   // ── Cart persistence ──────────────────────────────────────────────────────
 
-  function getCartToken() {
+  // Cached for the lifetime of this page load — avoids refetching /cart.js on
+  // every file upload/remove. Reset naturally on navigation.
+  let _cachedCartToken = null;
+
+  /**
+   * Returns the shopper's REAL Shopify cart token, via the Ajax Cart API.
+   * /cart.js always returns the current session's cart (creating one if it
+   * doesn't exist yet), so this is guaranteed to match order.cart_token from
+   * the orders/create webhook later — unlike parsing document.cookie, which
+   * only works *after* Shopify has already set the cart cookie (typically
+   * after a first "Add to cart"), and previously fell back to a random,
+   * unmatchable token when it hadn't.
+   */
+  async function getCartToken() {
+    if (_cachedCartToken) return _cachedCartToken;
+    try {
+      const res = await fetch('/cart.js', { credentials: 'same-origin' });
+      if (res.ok) {
+        const cart = await res.json();
+        if (cart && cart.token) {
+          _cachedCartToken = cart.token;
+          return _cachedCartToken;
+        }
+      }
+    } catch (e) { /* network hiccup — fall through to cookie */ }
+
+    // Fallback for the rare case /cart.js is unreachable: read the cookie if
+    // Shopify has already set one. Deliberately no random-token fallback —
+    // an upload that can never be matched to an order is worse than one that
+    // stays unlinked and visible in "All Uploads" for manual reconciliation.
     const m = document.cookie.match(/cart=([^;]+)/);
-    return m ? decodeURIComponent(m[1]) : 'cart_' + Math.random().toString(36).substr(2, 9);
+    if (m) {
+      _cachedCartToken = decodeURIComponent(m[1]);
+      return _cachedCartToken;
+    }
+    return null;
   }
 
   function persistUploadIds() {

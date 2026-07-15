@@ -156,13 +156,28 @@ export class WebhooksService {
     const shopifyOrderId = String(order.id);
     const orderId = String(order.order_number ?? order.id);
 
-    if (!cartToken) return;
+    if (!cartToken) {
+      this.logger.warn(
+        `orders/create webhook for #${orderId} (${shopDomain}) had no cart_token — cannot check for uploads to link.`,
+      );
+      return;
+    }
 
     const uploads = await this.uploadRepo.find({
       where: { merchantId: merchant.id, cartToken },
     });
 
-    if (!uploads.length) return;
+    if (!uploads.length) {
+      // Not necessarily a bug — most orders have no upload at all. But if this
+      // fires for an order you KNOW had a file uploaded first, the cartToken
+      // captured at upload time didn't match order.cart_token, which is
+      // exactly the failure mode the /cart.js fix in the theme widget
+      // addresses (see upload-widget.liquid getCartToken()).
+      this.logger.debug(
+        `No uploads found matching cartToken for order #${orderId} (${shopDomain}).`,
+      );
+      return;
+    }
 
     await this.uploadRepo.update(
       uploads.map((u) => u.id),
