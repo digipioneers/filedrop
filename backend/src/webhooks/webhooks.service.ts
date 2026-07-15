@@ -295,7 +295,12 @@ export class WebhooksService {
    */
   async handleOrderCreate(shopDomain: string, order: any): Promise<void> {
     const merchant = await this.merchantRepo.findOne({ where: { shopDomain } });
-    if (!merchant) return;
+    if (!merchant) {
+      this.logger.warn(
+        `orders/create webhook for shop "${shopDomain}" has no matching merchant record — was the app installed under a different shop domain string?`,
+      );
+      return;
+    }
 
     const cartToken = order.cart_token;
     const shopifyOrderId = String(order.id);

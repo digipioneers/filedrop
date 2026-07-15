@@ -22,16 +22,35 @@ export class WebhooksController {
     private readonly merchantRepo: Repository<Merchant>,
   ) {}
 
-  private verifyWebhook(req: any, hmacHeader: string): void {
-    if (!req.rawBody) throw new BadRequestException('No raw body');
-    if (!hmacHeader) throw new BadRequestException('Missing HMAC header');
+  private verifyWebhook(req: any, hmacHeader: string, topic: string, shop: string): void {
+    this.logger.log(`📥 Webhook received: ${topic} from ${shop || 'unknown shop'}`);
+    if (!req.rawBody) {
+      this.logger.error(`❌ Webhook ${topic} rejected: no raw body (check main.ts rawBody:true / body-parser setup)`);
+      throw new BadRequestException('No raw body');
+    }
+    if (!hmacHeader) {
+      this.logger.error(`❌ Webhook ${topic} rejected: missing X-Shopify-Hmac-Sha256 header`);
+      throw new BadRequestException('Missing HMAC header');
+    }
     const secret = this.configService.get<string>('SHOPIFY_API_SECRET');
+    if (!secret) {
+      this.logger.error(`❌ Webhook ${topic} rejected: SHOPIFY_API_SECRET is not set on this deployment`);
+      throw new BadRequestException('Server misconfiguration');
+    }
     const computed = crypto.createHmac('sha256', secret).update(req.rawBody).digest('base64');
     const hmacBuf = Buffer.from(hmacHeader);
     const computedBuf = Buffer.from(computed);
     if (hmacBuf.length !== computedBuf.length || !crypto.timingSafeEqual(computedBuf, hmacBuf)) {
+      // Do NOT log the actual secret or computed/received HMAC values —
+      // that would leak signing-key-derived material into logs. Logging
+      // that a mismatch occurred is enough to diagnose a wrong/rotated
+      // SHOPIFY_API_SECRET without exposing anything sensitive.
+      this.logger.error(
+        `❌ Webhook ${topic} rejected: HMAC mismatch — SHOPIFY_API_SECRET on this deployment likely doesn't match the app's current client secret in the Partner Dashboard.`,
+      );
       throw new BadRequestException('Invalid webhook HMAC');
     }
+    this.logger.log(`✅ Webhook ${topic} HMAC verified for ${shop}`);
   }
 
   @Post('app/uninstalled')
@@ -42,7 +61,7 @@ export class WebhooksController {
     @Headers('x-shopify-shop-domain') shop: string,
     @Body() body: any,
   ) {
-    this.verifyWebhook(req, hmac);
+    this.verifyWebhook(req, hmac, 'app/uninstalled', shop);
     this.logger.log(`App uninstalled for shop: ${shop}`);
     await this.merchantRepo.update({ shopDomain: shop }, { isActive: false, uninstalledAt: new Date() });
     return { ok: true };
@@ -56,7 +75,7 @@ export class WebhooksController {
     @Headers('x-shopify-shop-domain') shop: string,
     @Body() body: any,
   ) {
-    this.verifyWebhook(req, hmac);
+    this.verifyWebhook(req, hmac, 'orders/create', shop);
     await this.webhooksService.handleOrderCreate(shop, body);
     return { ok: true };
   }
@@ -69,7 +88,7 @@ export class WebhooksController {
     @Headers('x-shopify-shop-domain') shop: string,
     @Body() body: any,
   ) {
-    this.verifyWebhook(req, hmac);
+    this.verifyWebhook(req, hmac, 'orders/updated', shop);
     await this.webhooksService.handleOrderUpdate(shop, body);
     return { ok: true };
   }
@@ -82,7 +101,7 @@ export class WebhooksController {
     @Headers('x-shopify-shop-domain') shop: string,
     @Body() body: any,
   ) {
-    this.verifyWebhook(req, hmac);
+    this.verifyWebhook(req, hmac, 'products/update', shop);
     await this.webhooksService.handleProductUpdate(shop, body);
     return { ok: true };
   }
