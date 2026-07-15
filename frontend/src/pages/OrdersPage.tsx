@@ -34,7 +34,7 @@ export default function OrdersPage() {
   } as any);
 
   const { mutateAsync: downloadAll, isPending: downloading } = useMutation({
-    mutationFn: (id: string) => api.get(`/orders/${id}/download-all`).then(r => r.data),
+    mutationFn: (id: string) => api.get(`/orders/${id}/download-all`).then(r => r.data.data),
     onSuccess: (files: any[]) => {
       files.forEach((f, i) => setTimeout(() => { const a = document.createElement('a'); a.href = f.url; a.download = f.fileName; a.click(); }, i * 500));
     },
