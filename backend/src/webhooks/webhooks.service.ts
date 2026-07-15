@@ -323,8 +323,12 @@ export class WebhooksService {
       // captured at upload time didn't match order.cart_token, which is
       // exactly the failure mode the /cart.js fix in the theme widget
       // addresses (see upload-widget.liquid getCartToken()).
-      this.logger.debug(
-        `No uploads found matching cartToken for order #${orderId} (${shopDomain}).`,
+      //
+      // Uses .log() not .debug(): main.ts only enables ['error','warn','log']
+      // levels, so .debug() here would be silently swallowed and this branch
+      // would be invisible in production logs even when it fires.
+      this.logger.log(
+        `ℹ️  No uploads found matching cartToken for order #${orderId} (${shopDomain}). cartToken from webhook: ${cartToken}`,
       );
       return;
     }
