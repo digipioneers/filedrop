@@ -1001,7 +1001,13 @@
       if (res.ok) {
         const cart = await res.json();
         if (cart && cart.token) {
-          _cachedCartToken = cart.token;
+          // Shopify's /cart.js can return token in the form
+          // "{token}?key={checkoutKey}" (seen on this store/checkout
+          // configuration). The orders/create webhook's order.cart_token is
+          // the bare token WITHOUT that suffix, so keeping the suffix here
+          // guarantees every match attempt fails. Strip anything from "?"
+          // onward before storing/using it.
+          _cachedCartToken = String(cart.token).split('?')[0];
           return _cachedCartToken;
         }
       }
@@ -1013,7 +1019,7 @@
     // stays unlinked and visible in "All Uploads" for manual reconciliation.
     const m = document.cookie.match(/cart=([^;]+)/);
     if (m) {
-      _cachedCartToken = decodeURIComponent(m[1]);
+      _cachedCartToken = decodeURIComponent(m[1]).split('?')[0];
       return _cachedCartToken;
     }
     return null;
