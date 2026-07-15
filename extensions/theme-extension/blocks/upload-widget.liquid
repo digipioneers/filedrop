@@ -997,7 +997,7 @@
   async function getCartToken() {
     if (_cachedCartToken) return _cachedCartToken;
     try {
-      const res = await fetch('/cart.js', { credentials: 'same-origin' });
+      const res = await fetch('/cart.js', { credentials: 'same-origin', cache: 'no-store' });
       if (res.ok) {
         const cart = await res.json();
         if (cart && cart.token) {
