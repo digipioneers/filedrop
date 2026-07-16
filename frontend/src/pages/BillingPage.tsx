@@ -174,6 +174,27 @@ export function BillingPage() {
   const currentPlan = currentPlanData?.plan;
   const subscription = currentPlanData?.subscription;
 
+  // Recommend the next tier up from whatever plan the merchant is currently
+  // on, so the warning banner's upgrade button always points somewhere
+  // sensible rather than hardcoding a specific plan name.
+  const nextPlan = currentPlan
+    ? plansData
+        .filter((p: any) => p.sortOrder > currentPlan.sortOrder)
+        .sort((a: any, b: any) => a.sortOrder - b.sortOrder)[0]
+    : null;
+
+  const uploadsUsed = currentPlanData?.monthlyUploads ?? 0;
+  const storageUsed = currentPlanData?.storageUsedBytes ?? 0;
+  const uploadsLimit = currentPlan?.uploadsPerMonth ?? -1;
+  const storageLimit = currentPlan ? Number(currentPlan.storageBytes) : -1;
+
+  const uploadsPercent = uploadsLimit > 0 ? (uploadsUsed / uploadsLimit) * 100 : 0;
+  const storagePercent = storageLimit > 0 ? (storageUsed / storageLimit) * 100 : 0;
+  const usagePercent = Math.max(uploadsPercent, storagePercent);
+  const limitReached = usagePercent >= 100;
+  const nearLimit = !limitReached && usagePercent >= 80;
+  const limitedResource = uploadsPercent >= storagePercent ? 'uploads' : 'storage';
+
   return (
     <Page title="Plan & Billing" subtitle="Choose the right plan for your store">
       <Layout>
@@ -184,6 +205,36 @@ export function BillingPage() {
               <strong>Development</strong> plan with full features unlocked for testing. If you
               want to try the paid plans, upgrading here will use Shopify's test-charge mode — you
               won't be billed real money on a development store.
+            </Banner>
+          </Layout.Section>
+        )}
+
+        {(limitReached || nearLimit) && nextPlan && (
+          <Layout.Section>
+            <Banner
+              tone={limitReached ? 'critical' : 'warning'}
+              title={
+                limitReached
+                  ? `You've reached your ${currentPlan.displayName} plan's ${limitedResource} limit`
+                  : `You're close to your ${currentPlan.displayName} plan's ${limitedResource} limit`
+              }
+              action={{
+                content: `Upgrade to ${nextPlan.displayName}`,
+                onAction: () => upgradeMutation.mutate(nextPlan.name),
+                loading: upgradeMutation.isPending && pendingPlanName === nextPlan.name,
+              }}
+            >
+              {limitReached ? (
+                <p>
+                  New customer uploads are being blocked until you upgrade or your usage resets
+                  next month. Upgrade now to keep accepting uploads without interruption.
+                </p>
+              ) : (
+                <p>
+                  You've used {Math.round(usagePercent)}% of your {limitedResource} allowance this
+                  month. Upgrade now to avoid interrupting customer uploads once you hit the limit.
+                </p>
+              )}
             </Banner>
           </Layout.Section>
         )}

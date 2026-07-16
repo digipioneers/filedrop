@@ -302,9 +302,20 @@ export class StorefrontService {
       ? await this.planRepo.findOne({ where: { id: sub.planId } })
       : await this.planRepo.findOne({ where: { name: PlanName.FREE } });
     if (!plan) return;
-    if (plan.uploadsPerMonth !== -1 && merchant.monthlyUploads >= plan.uploadsPerMonth)
-      throw new ForbiddenException(`Monthly upload limit of ${plan.uploadsPerMonth} reached`);
-    if (Number(merchant.storageUsedBytes) >= Number(plan.storageBytes))
-      throw new ForbiddenException('Storage limit reached');
+    // These are shown directly to the SHOPPER on the storefront (not the
+    // merchant), so they deliberately don't mention plan names or specific
+    // limit numbers — that's internal merchant billing detail a customer
+    // has no reason to see. The technical detail is still logged for the
+    // merchant/support to diagnose from server logs if needed.
+    if (plan.uploadsPerMonth !== -1 && merchant.monthlyUploads >= plan.uploadsPerMonth) {
+      this.logger.warn(
+        `Upload blocked for merchant ${merchant.id}: monthly limit of ${plan.uploadsPerMonth} reached (plan: ${plan.displayName})`,
+      );
+      throw new ForbiddenException('This store is not accepting new uploads right now. Please try again later.');
+    }
+    if (Number(merchant.storageUsedBytes) >= Number(plan.storageBytes)) {
+      this.logger.warn(`Upload blocked for merchant ${merchant.id}: storage limit reached (plan: ${plan.displayName})`);
+      throw new ForbiddenException('This store is not accepting new uploads right now. Please try again later.');
+    }
   }
 }
