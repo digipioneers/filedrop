@@ -12,6 +12,12 @@ import { AnalyticsService } from './analytics.service';
 export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
+  @Get('stats')
+  @ApiOperation({ summary: 'Summary stat cards for the Analytics page' })
+  getStats(@CurrentMerchant() merchant: Merchant) {
+    return this.analyticsService.getStats(merchant.id);
+  }
+
   @Get('daily-uploads')
   @ApiOperation({ summary: 'Daily upload counts (last N days)' })
   @ApiQuery({ name: 'days', required: false, type: Number })

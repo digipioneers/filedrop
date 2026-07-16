@@ -107,15 +107,25 @@ export class DashboardService {
   }
 
   async getStorageGrowth(merchantId: string) {
+    const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const rows = await this.uploadRepo.createQueryBuilder('u')
       .select('DATE(u.createdAt)', 'date')
-      .addSelect('SUM(u.fileSizeBytes)', 'bytes')
+      .addSelect('SUM(u.fileSizeBytes)', 'dailyBytes')
       .where('u.merchantId = :merchantId', { merchantId })
+      .andWhere('u.createdAt >= :from', { from })
       .andWhere('u.deletedAt IS NULL')
       .groupBy('DATE(u.createdAt)')
       .orderBy('date', 'ASC')
       .getRawMany();
-    return rows;
+
+    // Cumulative running total rather than per-day amounts — a "growth"
+    // chart should read as an upward trend of total storage in use, not a
+    // series of daily spikes.
+    let cumulative = 0;
+    return rows.map((r: any) => {
+      cumulative += Number(r.dailyBytes ?? 0);
+      return { date: r.date, bytes: cumulative };
+    });
   }
 
   async getRecentUploads(merchantId: string) {

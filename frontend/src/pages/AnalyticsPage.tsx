@@ -32,7 +32,12 @@ export function AnalyticsPage() {
 
   const { data: daily } = useQuery({
     queryKey: ['analytics', 'daily'],
-    queryFn: () => api.get('/analytics/daily').then(r => r.data.data),
+    queryFn: () => api.get('/analytics/daily-uploads').then(r => r.data.data),
+  });
+
+  const { data: storageGrowth } = useQuery({
+    queryKey: ['analytics', 'storage-growth'],
+    queryFn: () => api.get('/analytics/storage-growth').then(r => r.data.data),
   });
 
   const { data: byType } = useQuery({
@@ -156,13 +161,13 @@ export function AnalyticsPage() {
             </Box>
             <Box padding="400">
               <ResponsiveContainer width="100%" height={220}>
-                <AreaChart data={daily ?? []}>
+                <AreaChart data={storageGrowth ?? []}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                   <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                   <YAxis tick={{ fontSize: 11 }}
                     tickFormatter={v => formatBytes(v, 0)} />
                   <Tooltip formatter={(v: number) => formatBytes(v)} />
-                  <Area type="monotone" dataKey="totalBytes" name="Storage"
+                  <Area type="monotone" dataKey="bytes" name="Storage"
                     stroke="#5c6ac4" fill="#f4f5fa" strokeWidth={2} />
                 </AreaChart>
               </ResponsiveContainer>

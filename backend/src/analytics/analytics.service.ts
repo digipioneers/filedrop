@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Upload } from '../uploads/entities/upload.entity';
+import { Upload, UploadStatus } from '../uploads/entities/upload.entity';
+import { UploadField } from '../uploads/entities/upload-field.entity';
 import { Merchant } from '../auth/entities/merchant.entity';
 
 @Injectable()
@@ -9,9 +10,46 @@ export class AnalyticsService {
   constructor(
     @InjectRepository(Upload)
     private readonly uploadRepo: Repository<Upload>,
+    @InjectRepository(UploadField)
+    private readonly fieldRepo: Repository<UploadField>,
     @InjectRepository(Merchant)
     private readonly merchantRepo: Repository<Merchant>,
   ) {}
+
+  /**
+   * Summary stat cards at the top of the Analytics page. This endpoint
+   * never existed before — the frontend was calling GET /analytics/stats
+   * with no matching backend route, silently 404ing, which is why every
+   * stat card showed 0 regardless of actual activity.
+   *
+   * Total/This month use the same cumulative merchant counters as the
+   * Dashboard and Billing pages (see dashboard.service.ts) rather than a
+   * live row count, so all three pages agree with each other and with
+   * what's actually enforced for plan limits.
+   */
+  async getStats(merchantId: string) {
+    const merchant = await this.merchantRepo.findOne({ where: { id: merchantId } });
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+
+    const [uploadsToday, activeFields, infectedFiles] = await Promise.all([
+      this.uploadRepo.createQueryBuilder('u')
+        .where('u.merchantId = :merchantId', { merchantId })
+        .andWhere('u.createdAt >= :today', { today })
+        .andWhere('u.deletedAt IS NULL')
+        .getCount(),
+      this.fieldRepo.count({ where: { merchantId, isActive: true } }),
+      this.uploadRepo.count({ where: { merchantId, status: UploadStatus.INFECTED, deletedAt: null } }),
+    ]);
+
+    return {
+      totalUploads: merchant?.totalUploads ?? 0,
+      uploadsThisMonth: merchant?.monthlyUploads ?? 0,
+      uploadsToday,
+      storageUsedBytes: Number(merchant?.storageUsedBytes ?? 0),
+      infectedFiles,
+      activeFields,
+    };
+  }
 
   /** Daily upload counts for the last N days. */
   async getDailyUploads(merchantId: string, days = 30) {
@@ -86,12 +124,15 @@ export class AnalyticsService {
   async getTopFields(merchantId: string, limit = 5) {
     return this.uploadRepo
       .createQueryBuilder('u')
+      .innerJoin(UploadField, 'f', 'f.id = u.uploadFieldId')
       .select('u.uploadFieldId', 'fieldId')
+      .addSelect('f.label', 'label')
       .addSelect('COUNT(*)', 'count')
       .where('u.merchantId = :merchantId', { merchantId })
       .andWhere('u.uploadFieldId IS NOT NULL')
       .andWhere('u.deletedAt IS NULL')
       .groupBy('u.uploadFieldId')
+      .addGroupBy('f.label')
       .orderBy('count', 'DESC')
       .limit(limit)
       .getRawMany();
