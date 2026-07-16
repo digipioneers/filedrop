@@ -113,7 +113,7 @@ export class AnalyticsService {
 
   /** Upload counts grouped by field type. */
   async getUploadsByFieldType(merchantId: string) {
-    return this.uploadRepo
+    const rows = await this.uploadRepo
       .createQueryBuilder('u')
       .select('u.mimeType', 'mimeType')
       .addSelect('COUNT(*)', 'count')
@@ -122,11 +122,18 @@ export class AnalyticsService {
       .groupBy('u.mimeType')
       .orderBy('count', 'DESC')
       .getRawMany();
+    // MySQL's raw COUNT(*) comes back as a string via the driver. Recharts'
+    // PieChart computes arc angles numerically from dataKey values — a
+    // string count can silently produce zero/NaN-angle (invisible) slices,
+    // which is exactly what was happening here even though this same raw
+    // "12" string caused no visible problem in the BarChart used elsewhere
+    // on this page.
+    return rows.map((r: any) => ({ mimeType: r.mimeType, count: Number(r.count) }));
   }
 
   /** Top N upload fields by usage. */
   async getTopFields(merchantId: string, limit = 5) {
-    return this.uploadRepo
+    const rows = await this.uploadRepo
       .createQueryBuilder('u')
       .innerJoin(UploadField, 'f', 'f.id = u.uploadFieldId')
       .select('u.uploadFieldId', 'fieldId')
@@ -140,11 +147,12 @@ export class AnalyticsService {
       .orderBy('count', 'DESC')
       .limit(limit)
       .getRawMany();
+    return rows.map((r: any) => ({ fieldId: r.fieldId, label: r.label, count: Number(r.count) }));
   }
 
   /** Upload scan status breakdown. */
   async getScanStats(merchantId: string) {
-    return this.uploadRepo
+    const rows = await this.uploadRepo
       .createQueryBuilder('u')
       .select('u.status', 'status')
       .addSelect('COUNT(*)', 'count')
@@ -152,6 +160,7 @@ export class AnalyticsService {
       .andWhere('u.deletedAt IS NULL')
       .groupBy('u.status')
       .getRawMany();
+    return rows.map((r: any) => ({ status: r.status, count: Number(r.count) }));
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
