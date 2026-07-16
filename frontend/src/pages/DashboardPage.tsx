@@ -140,6 +140,9 @@ export function DashboardPage() {
           <Card>
             <div style={{ padding: '20px' }}>
               <Text variant="headingMd" as="h2">Monthly Uploads</Text>
+              <Text variant="bodySm" tone="subdued" as="p">
+                Files currently on record per month — may differ from the "This Month" total above if any uploads were later deleted
+              </Text>
               <div style={{ marginTop: '16px', height: 240 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={monthlyData ?? []}>
@@ -165,7 +168,7 @@ export function DashboardPage() {
                   <AreaChart data={storageGrowthData ?? []}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                    <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => formatBytes(v, 0)} />
+                    <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => formatBytes(v, 1)} />
                     <Tooltip formatter={(v: number) => formatBytes(v)} />
                     <Area
                       type="monotone"

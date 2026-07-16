@@ -35,6 +35,16 @@ export const databaseConfig = (config: ConfigService): any => {
     logging: false,
     charset: 'utf8mb4',
     timezone: 'Z',
+    // Without this, MySQL DATE()/DATETIME results come back as native JS
+    // Date objects rather than plain 'YYYY-MM-DD' strings. That silently
+    // breaks every chart that zero-fills a date range by matching DB rows
+    // against generated string keys (a Date object never strictly-equals
+    // a string, so every lookup falls through to its default of 0 even
+    // when real matching data exists) — this was the root cause of charts
+    // like "Daily uploads" appearing completely flat despite real
+    // activity, and of X-axis labels showing full ISO timestamps like
+    // "2026-07-16T00:00:00.000Z" instead of a clean date.
+    dateStrings: true,
     retryAttempts: 20,
     retryDelay: 3000,
     extra: { connectionLimit: 10, connectTimeout: 30000 },

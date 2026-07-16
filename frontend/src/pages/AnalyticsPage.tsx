@@ -165,7 +165,7 @@ export function AnalyticsPage() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                   <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                   <YAxis tick={{ fontSize: 11 }}
-                    tickFormatter={v => formatBytes(v, 0)} />
+                    tickFormatter={v => formatBytes(v, 1)} />
                   <Tooltip formatter={(v: number) => formatBytes(v)} />
                   <Area type="monotone" dataKey="bytes" name="Storage"
                     stroke="#5c6ac4" fill="#f4f5fa" strokeWidth={2} />

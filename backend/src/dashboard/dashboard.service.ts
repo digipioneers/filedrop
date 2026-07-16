@@ -72,7 +72,19 @@ export class DashboardService {
       .groupBy('DATE(u.createdAt)')
       .orderBy('date', 'ASC')
       .getRawMany();
-    return rows;
+
+    // Zero-fill the full 30-day window instead of only returning days that
+    // have activity — without this, a store with uploads on only one or
+    // two days shows a chart with a single point rather than a proper
+    // 30-day trend line, the same issue already fixed for Monthly Uploads.
+    const countByDate = new Map(rows.map((r: any) => [r.date, Number(r.count)]));
+    const filled: { date: string; count: number }[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+      const key = d.toISOString().slice(0, 10);
+      filled.push({ date: key, count: countByDate.get(key) ?? 0 });
+    }
+    return filled;
   }
 
   async getMonthlyUploads(merchantId: string) {
@@ -107,7 +119,8 @@ export class DashboardService {
   }
 
   async getStorageGrowth(merchantId: string) {
-    const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const days = 30;
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const rows = await this.uploadRepo.createQueryBuilder('u')
       .select('DATE(u.createdAt)', 'date')
       .addSelect('SUM(u.fileSizeBytes)', 'dailyBytes')
@@ -118,14 +131,16 @@ export class DashboardService {
       .orderBy('date', 'ASC')
       .getRawMany();
 
-    // Cumulative running total rather than per-day amounts — a "growth"
-    // chart should read as an upward trend of total storage in use, not a
-    // series of daily spikes.
+    const bytesByDate = new Map(rows.map((r: any) => [r.date, Number(r.dailyBytes ?? 0)]));
     let cumulative = 0;
-    return rows.map((r: any) => {
-      cumulative += Number(r.dailyBytes ?? 0);
-      return { date: r.date, bytes: cumulative };
-    });
+    const filled: { date: string; bytes: number }[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+      const key = d.toISOString().slice(0, 10);
+      cumulative += bytesByDate.get(key) ?? 0;
+      filled.push({ date: key, bytes: cumulative });
+    }
+    return filled;
   }
 
   async getRecentUploads(merchantId: string) {

@@ -99,12 +99,16 @@ export class AnalyticsService {
       .orderBy('date', 'ASC')
       .getRawMany();
 
-    // Convert to cumulative
+    const bytesByDate = new Map(rows.map((r: any) => [r.date, Number(r.dailyBytes ?? 0)]));
     let cumulative = 0;
-    return rows.map((r) => {
-      cumulative += Number(r.dailyBytes ?? 0);
-      return { date: r.date, bytes: cumulative };
-    });
+    const filled: { date: string; bytes: number }[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 86_400_000);
+      const key = d.toISOString().slice(0, 10);
+      cumulative += bytesByDate.get(key) ?? 0;
+      filled.push({ date: key, bytes: cumulative });
+    }
+    return filled;
   }
 
   /** Upload counts grouped by field type. */
