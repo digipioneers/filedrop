@@ -39,7 +39,19 @@ export class BillingService {
     const plan = sub
       ? await this.planRepo.findOne({ where: { id: sub.planId } })
       : await this.planRepo.findOne({ where: { name: PlanName.FREE } });
-    return { subscription: sub, plan };
+
+    // The frontend's "Current Usage" section reads monthlyUploads and
+    // storageUsedBytes directly off this response — they were never
+    // included here, so it always displayed 0 regardless of actual usage.
+    const merchant = await this.merchantRepo.findOne({ where: { id: merchantId } });
+
+    return {
+      subscription: sub,
+      plan,
+      monthlyUploads: merchant?.monthlyUploads ?? 0,
+      storageUsedBytes: Number(merchant?.storageUsedBytes ?? 0),
+      totalUploads: merchant?.totalUploads ?? 0,
+    };
   }
 
   async createSubscription(merchant: Merchant, planName: PlanName, returnUrl: string) {
