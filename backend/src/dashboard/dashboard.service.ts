@@ -85,7 +85,25 @@ export class DashboardService {
       .groupBy('month')
       .orderBy('month', 'ASC')
       .getRawMany();
-    return rows;
+
+    // Without this, a store with activity in only one month (very common
+    // for a new install, or a dev/test store like this one) returns a
+    // single row — which a bar chart renders as one bar stretched across
+    // the whole width, looking like something's broken rather than just
+    // "there's one month of data so far." Zero-filling the last 6 months
+    // gives the chart proper context either way, the same way the "Daily
+    // Uploads (Last 30 Days)" chart already always shows a fixed window.
+    const countByMonth = new Map(rows.map((r: any) => [r.month, Number(r.count)]));
+    const months = 6;
+    const filled: { month: string; count: number }[] = [];
+    const cursor = new Date();
+    cursor.setDate(1); // avoid month-length rollover issues when subtracting months
+    for (let i = months - 1; i >= 0; i--) {
+      const d = new Date(cursor.getFullYear(), cursor.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      filled.push({ month: key, count: countByMonth.get(key) ?? 0 });
+    }
+    return filled;
   }
 
   async getStorageGrowth(merchantId: string) {
