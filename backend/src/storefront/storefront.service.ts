@@ -13,6 +13,7 @@ import { EmailService } from '../email/email.service';
 import { AppSettings } from '../admin/entities/app-settings.entity';
 import { v4 as uuid } from 'uuid';
 import { getImageDimensions } from '../common/utils/image-dimensions';
+import { buildDownloadFilename } from '../common/utils/download-filename.util';
 
 @Injectable()
 export class StorefrontService {
@@ -229,7 +230,7 @@ export class StorefrontService {
       await this.uploadRepo.update(upload.id, { status: UploadStatus.CLEAN, scanResult: 'clean' });
       const settings = await this.settingsRepo.findOne({ where: { merchantId: merchant.id } });
       if (settings?.notifyMerchantOnUpload) {
-        const url = await this.storageService.getSignedDownloadUrl(upload.s3Key, upload.originalFileName);
+        const url = await this.storageService.getSignedDownloadUrl(upload.s3Key, buildDownloadFilename(upload));
         await this.emailService.sendMerchantUploadNotification({
           merchantEmail: settings.notificationEmail || merchant.shopEmail,
           shopName: merchant.shopName || merchant.shopDomain,

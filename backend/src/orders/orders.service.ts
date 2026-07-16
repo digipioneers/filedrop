@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Upload, UploadStatus } from '../uploads/entities/upload.entity';
 import { StorageService } from '../storage/storage.service';
+import { buildDownloadFilename } from '../common/utils/download-filename.util';
 
 @Injectable()
 export class OrdersService {
@@ -22,7 +23,7 @@ export class OrdersService {
     const uploadsWithUrls = await Promise.all(
       uploads.map(async (upload) => {
         const signedUrl = upload.status === UploadStatus.CLEAN
-          ? await this.storageService.getSignedDownloadUrl(upload.s3Key, upload.originalFileName, 3600)
+          ? await this.storageService.getSignedDownloadUrl(upload.s3Key, buildDownloadFilename(upload), 3600)
           : null;
         return { ...upload, signedUrl };
       }),
@@ -77,10 +78,13 @@ export class OrdersService {
       where: { merchantId, orderId, deletedAt: null },
     });
     return Promise.all(
-      uploads.map(async (upload) => ({
-        fileName: upload.originalFileName,
-        url: await this.storageService.getSignedDownloadUrl(upload.s3Key, upload.originalFileName, 900),
-      })),
+      uploads.map(async (upload) => {
+        const fileName = buildDownloadFilename(upload);
+        return {
+          fileName,
+          url: await this.storageService.getSignedDownloadUrl(upload.s3Key, fileName, 900),
+        };
+      }),
     );
   }
 }

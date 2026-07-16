@@ -9,6 +9,7 @@ import { Merchant } from '../auth/entities/merchant.entity';
 import { StorageService } from '../storage/storage.service';
 import { SecurityService } from '../security/security.service';
 import { getImageDimensions } from '../common/utils/image-dimensions';
+import { buildDownloadFilename } from '../common/utils/download-filename.util';
 import { CreateUploadFieldDto } from './dto/create-upload-field.dto';
 import { UpdateUploadFieldDto } from './dto/update-upload-field.dto';
 import { UploadFileDto } from './dto/upload-file.dto';
@@ -272,7 +273,7 @@ export class UploadsService {
     if (upload.status === UploadStatus.INFECTED) {
       throw new ForbiddenException('File is infected and cannot be downloaded');
     }
-    return this.storageService.getSignedDownloadUrl(upload.s3Key, upload.originalFileName, 3600);
+    return this.storageService.getSignedDownloadUrl(upload.s3Key, buildDownloadFilename(upload), 3600);
   }
 
   async deleteUpload(merchantId: string, uploadId: string): Promise<void> {
