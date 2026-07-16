@@ -100,7 +100,19 @@ export class StorefrontService {
     if (!field || !field.enablePreview || !field.previewTemplateKey) {
       throw new NotFoundException('Preview template not found');
     }
-    const buffer = await this.storageService.getFileBuffer(field.previewTemplateKey);
+    let buffer: Buffer;
+    try {
+      buffer = await this.storageService.getFileBuffer(field.previewTemplateKey);
+    } catch (err: any) {
+      // Most likely cause: the object was deleted directly from the storage
+      // bucket (e.g. manual cleanup) while this field's DB record still
+      // references its key. Surface a clean 404 instead of letting the raw
+      // S3 NoSuchKey error bubble up as an unhandled 500.
+      this.logger.warn(
+        `Preview template file missing for field ${fieldId} (key: ${field.previewTemplateKey}): ${err?.message}`,
+      );
+      throw new NotFoundException('Preview template file is missing — please re-upload it in Upload Field settings');
+    }
     const ext = field.previewTemplateKey.split('.').pop() || 'jpg';
     const mimeType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
     return { buffer, mimeType };
@@ -196,7 +208,21 @@ export class StorefrontService {
 
   private async virusScanAsync(upload: Upload, merchant: Merchant) {
     await this.uploadRepo.update(upload.id, { status: UploadStatus.SCANNING });
-    const buffer = await this.storageService.getFileBuffer(upload.s3Key);
+    let buffer: Buffer;
+    try {
+      buffer = await this.storageService.getFileBuffer(upload.s3Key);
+    } catch (err: any) {
+      // Without this catch, any failure here (missing object, transient S3
+      // error, etc.) leaves the upload stuck showing "scanning" forever,
+      // since the outer .catch() in the caller only logs — it never updates
+      // the upload's status to a terminal state.
+      this.logger.error(`Virus scan could not read file for upload ${upload.id}: ${err?.message}`);
+      await this.uploadRepo.update(upload.id, {
+        status: UploadStatus.FAILED,
+        scanResult: 'File could not be read for scanning',
+      });
+      return;
+    }
     const { isClean, virusName } = await this.securityService.scanForViruses(buffer);
 
     if (isClean) {
@@ -224,7 +250,14 @@ export class StorefrontService {
     const upload = await this.uploadRepo.findOne({ where: { id: uploadId, merchantId, cartToken, deletedAt: null } });
     if (!upload) throw new NotFoundException('Upload not found');
     if (upload.orderId) throw new ForbiddenException('Cannot remove after order placed');
-    await this.storageService.deleteFile(upload.s3Key);
+    // Soft-delete the DB record regardless of whether the storage delete
+    // succeeds — a missing object shouldn't block the customer from
+    // removing an upload from their cart (e.g. it was already cleaned up
+    // manually), and this stays consistent with the other delete call
+    // sites in the codebase which already tolerate this.
+    await this.storageService.deleteFile(upload.s3Key).catch((err: any) => {
+      this.logger.warn(`Could not delete storage object for upload ${uploadId}: ${err?.message}`);
+    });
     await this.uploadRepo.update(uploadId, { deletedAt: new Date() });
   }
 
