@@ -16,22 +16,31 @@ export class DashboardService {
   async getStats(merchantId: string) {
     const merchant = await this.merchantRepo.findOne({ where: { id: merchantId } });
     const today = new Date(); today.setHours(0,0,0,0);
-    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
 
-    const [totalUploads, uploadsToday, uploadsThisMonth, activeFields] = await Promise.all([
-      this.uploadRepo.count({ where: { merchantId, deletedAt: null } }),
+    // Total Uploads and This Month now read from the SAME cumulative
+    // merchant.totalUploads / merchant.monthlyUploads counters that
+    // billing.service.ts and the plan-limit check already use as the
+    // real source of truth. Previously these were computed as a live
+    // COUNT(*) against current uploads rows, which silently diverged from
+    // the Billing page's numbers whenever any upload got deleted (manual
+    // cleanup, a customer removing their own upload, scheduled retention,
+    // etc.) — the count would go down, but the cumulative usage that
+    // actually governs the plan limit would not. Showing two different
+    // numbers for "how many uploads this month" on two different pages of
+    // the same app was confusing and wrong; this makes them match.
+    //
+    // "Uploads Today" has no equivalent cumulative counter on Merchant (only
+    // total/monthly are tracked), so it necessarily stays a live query.
+    const [uploadsToday, activeFields] = await Promise.all([
       this.uploadRepo.createQueryBuilder('u')
         .where('u.merchantId = :merchantId', { merchantId })
         .andWhere('u.createdAt >= :today', { today })
         .andWhere('u.deletedAt IS NULL')
         .getCount(),
-      this.uploadRepo.createQueryBuilder('u')
-        .where('u.merchantId = :merchantId', { merchantId })
-        .andWhere('u.createdAt >= :monthStart', { monthStart })
-        .andWhere('u.deletedAt IS NULL')
-        .getCount(),
       this.fieldRepo.count({ where: { merchantId, isActive: true } }),
     ]);
+    const totalUploads = merchant?.totalUploads ?? 0;
+    const uploadsThisMonth = merchant?.monthlyUploads ?? 0;
 
     const ordersResult = await this.uploadRepo.createQueryBuilder('u')
       .select('COUNT(DISTINCT u.orderId)', 'count')
