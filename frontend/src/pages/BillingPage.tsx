@@ -7,40 +7,43 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../utils/api';
 import { formatBytes } from '../utils/format';
 
-const PLAN_FEATURES: Record<string, string[]> = {
-  free: [
-    '250 uploads/month',
-    '2 GB storage',
-    '50 MB max file size',
-    'All file types + image editor',
-    'Product preview',
-    'Free for Shopify development stores',
-  ],
-  starter: [
-    '500 uploads/month',
-    '5 GB storage',
-    '25 MB max file size',
-    'File & text uploads linked to orders',
-    'Email notifications',
-  ],
-  pro: [
-    '2,000 uploads/month',
-    '20 GB storage',
-    '100 MB max file size',
-    'Image & text uploads',
-    'Live product preview (t-shirts, mugs, etc.)',
-    'Image editor (crop, rotate)',
-    'Conditional upload logic',
-  ],
-  advanced: [
-    'Unlimited uploads',
-    '100 GB storage',
-    '2 GB max file size',
-    'Everything in Pro',
-    'Custom branding',
-    'Priority support + Slack',
-  ],
+// Human-readable labels for the plan.features boolean flags (set in
+// PlansSeeder / editable via the admin panel's Plans & Pricing page).
+// Only the LABEL TEXT is static UI copy — whether each line actually
+// appears on a given plan's card is fully driven by that plan's live
+// `features` data, not hardcoded per plan name.
+const FEATURE_LABELS: Record<string, string> = {
+  imageEditor: 'Image editor (crop, rotate)',
+  conditionalLogic: 'Conditional upload logic',
+  emailNotifications: 'Email notifications',
+  productPreview: 'Live product preview (t-shirts, mugs, etc.)',
+  customerPositioning: 'Customer can reposition their design',
+  customBranding: 'Custom branding',
+  prioritySupport: 'Priority support + Slack',
 };
+
+// Builds a plan card's bullet list entirely from that plan's real, current
+// database row — never from a hardcoded per-plan-name list. This is what
+// keeps the cards truthful when limits are changed via the admin panel's
+// Plans & Pricing page instead of always showing whatever was seeded.
+function buildPlanFeatureList(plan: any): string[] {
+  const lines: string[] = [];
+
+  lines.push(
+    plan.uploadsPerMonth === -1
+      ? 'Unlimited uploads'
+      : `${plan.uploadsPerMonth.toLocaleString()} uploads/month`,
+  );
+  lines.push(`${formatBytes(plan.storageBytes)} storage`);
+  lines.push(`${formatBytes(plan.maxFileSizeBytes)} max file size`);
+
+  const features = plan.features || {};
+  for (const key of Object.keys(FEATURE_LABELS)) {
+    if (features[key]) lines.push(FEATURE_LABELS[key]);
+  }
+
+  return lines;
+}
 
 function PlanCard({
   plan, currentPlanName, onSelect, isLoading, disabled, trialDays,
@@ -82,7 +85,7 @@ function PlanCard({
           </div>
 
           <List>
-            {(PLAN_FEATURES[plan.name] ?? []).map((f) => (
+            {buildPlanFeatureList(plan).map((f) => (
               <List.Item key={f}>{f}</List.Item>
             ))}
           </List>
