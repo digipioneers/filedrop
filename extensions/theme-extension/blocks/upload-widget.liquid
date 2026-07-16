@@ -986,37 +986,60 @@
   let _cachedCartToken = null;
 
   /**
-   * Returns the shopper's REAL Shopify cart token, via the Ajax Cart API.
-   * /cart.js always returns the current session's cart (creating one if it
-   * doesn't exist yet), so this is guaranteed to match order.cart_token from
-   * the orders/create webhook later — unlike parsing document.cookie, which
-   * only works *after* Shopify has already set the cart cookie (typically
-   * after a first "Add to cart"), and previously fell back to a random,
-   * unmatchable token when it hadn't.
+   * Returns the shopper's REAL, DURABLE Shopify cart token.
+   *
+   * IMPORTANT: this deliberately uses POST /cart/update.js with a no-op
+   * payload, NOT GET /cart.js. On a cart that has no items yet (the normal
+   * case here, since the customer uploads a file BEFORE clicking "Add to
+   * cart"), a read-only GET /cart.js can return a token that is not yet
+   * Shopify's final, persisted cart identity — Shopify only durably commits
+   * to a cart once it's actually mutated. That provisional token then never
+   * matches order.cart_token from the orders/create webhook later, even
+   * though it looked like a perfectly valid token at the time.
+   *
+   * POSTing a harmless empty update forces Shopify to instantiate (or
+   * confirm) the real, persistent cart right now and returns that cart's
+   * actual token — the same one that will end up on the resulting order.
    */
   async function getCartToken() {
     if (_cachedCartToken) return _cachedCartToken;
+    try {
+      const res = await fetch('/cart/update.js', {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates: {} }),
+      });
+      if (res.ok) {
+        const cart = await res.json();
+        if (cart && cart.token) {
+          // Some store configurations still append "?key={checkoutKey}" to
+          // the token — strip it, since order.cart_token is always bare.
+          _cachedCartToken = String(cart.token).split('?')[0];
+          return _cachedCartToken;
+        }
+      }
+    } catch (e) { /* network hiccup — fall through */ }
+
+    // Fallback: try a plain GET, in case /cart/update.js is blocked by a
+    // theme customization or cart-mutation restriction. Better than
+    // nothing, though it carries the provisional-token risk described above.
     try {
       const res = await fetch('/cart.js', { credentials: 'same-origin', cache: 'no-store' });
       if (res.ok) {
         const cart = await res.json();
         if (cart && cart.token) {
-          // Shopify's /cart.js can return token in the form
-          // "{token}?key={checkoutKey}" (seen on this store/checkout
-          // configuration). The orders/create webhook's order.cart_token is
-          // the bare token WITHOUT that suffix, so keeping the suffix here
-          // guarantees every match attempt fails. Strip anything from "?"
-          // onward before storing/using it.
           _cachedCartToken = String(cart.token).split('?')[0];
           return _cachedCartToken;
         }
       }
-    } catch (e) { /* network hiccup — fall through to cookie */ }
+    } catch (e) { /* fall through to cookie */ }
 
-    // Fallback for the rare case /cart.js is unreachable: read the cookie if
-    // Shopify has already set one. Deliberately no random-token fallback —
-    // an upload that can never be matched to an order is worse than one that
-    // stays unlinked and visible in "All Uploads" for manual reconciliation.
+    // Last resort: read the cookie if Shopify has already set one.
+    // Deliberately no random-token fallback — an upload that can never be
+    // matched to an order is worse than one that stays unlinked and visible
+    // in "All Uploads" for manual reconciliation.
     const m = document.cookie.match(/cart=([^;]+)/);
     if (m) {
       _cachedCartToken = decodeURIComponent(m[1]).split('?')[0];
