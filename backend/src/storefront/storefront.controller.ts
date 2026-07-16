@@ -126,4 +126,34 @@ export class StorefrontController {
   ) {
     return this.storefrontService.removeCustomerUpload(uploadId, merchantId, cartToken);
   }
+
+  /**
+   * POST /storefront/upload/rebind-cart-token
+   *
+   * Shopify does not assign a cart's final, durable token until an item is
+   * actually added to it — but this widget uploads files BEFORE "Add to
+   * Cart" is clicked, so the token captured at upload time can be a
+   * provisional one that never matches order.cart_token later.
+   *
+   * The widget calls this right after it detects a successful Add to Cart,
+   * re-fetching the now-final cart token and re-binding any uploads made
+   * earlier in this browser session to it, so order-matching succeeds.
+   */
+  @Post('upload/rebind-cart-token')
+  @ApiOperation({ summary: 'Re-bind uploads to the final cart token after Add to Cart (public)' })
+  rebindCartToken(
+    @Body('shop') shop: string,
+    @Body('merchantId') merchantIdBody: string,
+    @Body('uploadIds') uploadIds: string[],
+    @Body('oldCartToken') oldCartToken: string,
+    @Body('cartToken') cartToken: string,
+  ) {
+    const shopOrMerchantId = shop || merchantIdBody;
+    if (!shopOrMerchantId) throw new BadRequestException('shop or merchantId is required');
+    if (!cartToken) throw new BadRequestException('cartToken is required');
+    if (!Array.isArray(uploadIds) || !uploadIds.length) {
+      throw new BadRequestException('uploadIds is required');
+    }
+    return this.storefrontService.rebindCartToken(shopOrMerchantId, uploadIds, oldCartToken, cartToken);
+  }
 }

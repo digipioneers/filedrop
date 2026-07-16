@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In, IsNull } from 'typeorm';
 import { Upload, UploadStatus } from '../uploads/entities/upload.entity';
 import { UploadField, AssignmentType } from '../uploads/entities/upload-field.entity';
 import { Merchant } from '../auth/entities/merchant.entity';
@@ -259,6 +259,40 @@ export class StorefrontService {
       this.logger.warn(`Could not delete storage object for upload ${uploadId}: ${err?.message}`);
     });
     await this.uploadRepo.update(uploadId, { deletedAt: new Date() });
+  }
+
+  /**
+   * Re-binds one or more uploads to the cart's final, durable token, called
+   * by the widget right after it detects a successful Add to Cart. See the
+   * controller's doc comment for why this is necessary.
+   *
+   * Scoped defensively: only touches uploads that (a) belong to this
+   * merchant, (b) haven't already been linked to an order, and (c) — when
+   * oldCartToken is provided — currently carry that specific provisional
+   * token, so this can never accidentally reassign someone else's upload.
+   */
+  async rebindCartToken(
+    shopOrMerchantId: string,
+    uploadIds: string[],
+    oldCartToken: string | undefined,
+    newCartToken: string,
+  ): Promise<{ updated: number }> {
+    const merchantId = await this.resolveMerchantId(shopOrMerchantId);
+
+    const where: any = {
+      id: In(uploadIds),
+      merchantId,
+      orderId: IsNull(),
+      deletedAt: IsNull(),
+    };
+    if (oldCartToken) where.cartToken = oldCartToken;
+
+    const result = await this.uploadRepo.update(where, { cartToken: newCartToken });
+    const updated = result.affected || 0;
+    this.logger.log(
+      `Rebound ${updated} upload(s) from cartToken "${oldCartToken}" to "${newCartToken}" for merchant ${merchantId}`,
+    );
+    return { updated };
   }
 
   private async checkPlanLimits(merchant: Merchant) {

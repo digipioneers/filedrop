@@ -304,6 +304,80 @@
   let allUploadedIds = [];
   let cropper = null;
   let pendingEditorCallback = null;
+  // Cached cart token for the lifetime of this page load — avoids
+  // refetching /cart.js on every file upload/remove. Reset naturally on
+  // navigation. Declared here (rather than down near getCartToken) since
+  // rebindUploadsToRealCartToken(), defined just below, also needs it.
+  let _cachedCartToken = null;
+
+  // ── Rebind uploads to the cart's final token after Add to Cart ─────────────
+  // See getCartToken() below for why the token captured at upload time can
+  // be provisional. This detects a successful Add to Cart (by patching both
+  // fetch and XMLHttpRequest, since different themes' cart drawers use
+  // either) and re-syncs any uploads made earlier in this session to
+  // whatever cart token Shopify has now finalized.
+
+  async function rebindUploadsToRealCartToken() {
+    if (!allUploadedIds.length) return;
+    const oldToken = _cachedCartToken;
+    try {
+      const res = await fetch('/cart.js', { credentials: 'same-origin', cache: 'no-store' });
+      if (!res.ok) return;
+      const cart = await res.json();
+      const freshToken = cart && cart.token ? String(cart.token).split('?')[0] : null;
+      if (!freshToken || freshToken === oldToken) return; // nothing changed, or nothing to fix
+
+      const rebindRes = await fetch(`${API_URL}/storefront/upload/rebind-cart-token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shop: SHOP,
+          uploadIds: allUploadedIds,
+          oldCartToken: oldToken,
+          cartToken: freshToken,
+        }),
+      });
+      if (rebindRes.ok) {
+        _cachedCartToken = freshToken; // keep subsequent uploads in this session consistent too
+      }
+    } catch (e) { /* best-effort — an upload staying on its original token is not fatal */ }
+  }
+
+  function watchForAddToCart() {
+    const looksLikeCartAdd = (url) => typeof url === 'string' && /\/cart\/add(\.js)?(\?|$)/.test(url);
+
+    const origFetch = window.fetch;
+    window.fetch = function (input, init) {
+      const url = typeof input === 'string' ? input : (input && input.url);
+      const p = origFetch.apply(this, arguments);
+      if (looksLikeCartAdd(url) && (!init || !init.method || init.method.toUpperCase() === 'POST')) {
+        p.then((r) => { if (r.ok) setTimeout(rebindUploadsToRealCartToken, 300); }).catch(() => {});
+      }
+      return p;
+    };
+
+    const OrigXHR = window.XMLHttpRequest;
+    const origOpen = OrigXHR.prototype.open;
+    OrigXHR.prototype.open = function (method, url) {
+      if (looksLikeCartAdd(url)) {
+        this.addEventListener('load', () => {
+          if (this.status >= 200 && this.status < 300) setTimeout(rebindUploadsToRealCartToken, 300);
+        });
+      }
+      return origOpen.apply(this, arguments);
+    };
+
+    // Traditional (non-AJAX) form submit to /cart/add — the page will
+    // navigate away immediately after, so there's no time to call our
+    // endpoint here; best-effort attempt fired without blocking submission.
+    document.addEventListener('submit', (e) => {
+      const form = e.target;
+      if (form && form.action && looksLikeCartAdd(form.action)) {
+        rebindUploadsToRealCartToken();
+      }
+    }, true);
+  }
+  watchForAddToCart();
 
   // ── Custom CSS injection ────────────────────────────────────────────────
   // Merchant-defined CSS from Settings → Appearance → Custom CSS.
@@ -980,10 +1054,6 @@
   }
 
   // ── Cart persistence ──────────────────────────────────────────────────────
-
-  // Cached for the lifetime of this page load — avoids refetching /cart.js on
-  // every file upload/remove. Reset naturally on navigation.
-  let _cachedCartToken = null;
 
   /**
    * Returns the shopper's REAL, DURABLE Shopify cart token.
