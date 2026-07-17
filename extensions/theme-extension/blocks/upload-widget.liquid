@@ -9,6 +9,7 @@
   data-shop="{{ shop.domain }}"
   data-product-id="{{ product.id }}"
   data-variant-id="{{ product.selected_or_first_available_variant.id }}"
+  data-product-image="{{ product.selected_or_first_available_variant.featured_image | default: product.featured_image | image_url: width: 1600 }}"
   data-api-url="{{ block.settings.api_url }}"
   data-button-color="{{ block.settings.button_color }}"
   data-button-text="{{ block.settings.button_text }}"
@@ -293,6 +294,7 @@
 
   const SHOP         = widget.dataset.shop;
   const PRODUCT_ID   = widget.dataset.productId;
+  let   PRODUCT_IMAGE = widget.dataset.productImage || '';
   const API_URL      = widget.dataset.apiUrl;
   const BTN_COLOR    = widget.dataset.buttonColor || '#008060';
   const BTN_TEXT     = widget.dataset.buttonText || 'Upload File';
@@ -691,6 +693,9 @@
     const v = e?.detail?.variant;
     if (v) {
       widget.dataset.variantId = v.id;
+      if (v.featured_image && v.featured_image.src) {
+        PRODUCT_IMAGE = v.featured_image.src;
+      }
       container.innerHTML = '';
       allUploadedIds = [];
       loadFields();
@@ -856,19 +861,30 @@
       }
 
       const proceedToUpload = (f) => {
-        if (field.enablePreview && field.previewTemplateUrl && field.allowCustomerPositioning) {
+        // Prefer the ACTUAL product photo as the compositing/design
+        // canvas over a merchant-uploaded generic mockup. A single
+        // uploaded template can't realistically match every product in
+        // the store (e.g. a blank bottle mockup showing up underneath a
+        // snowboard design) since Upload Fields are commonly assigned to
+        // the entire store rather than per-product. The real product
+        // image is always correct for whichever product the customer is
+        // actually viewing. The merchant's custom template (if any) is
+        // still used as a fallback for products with no image at all.
+        const canvasImage = PRODUCT_IMAGE || field.previewTemplateUrl;
+
+        if (field.enablePreview && canvasImage && field.allowCustomerPositioning) {
           // Full designer: customer drags/resizes/rotates their image and
           // can add text — this replaces the fixed compositing preview.
           openDesigner(
-            field.previewTemplateUrl,
+            canvasImage,
             field.previewPlacement,
             f,
             { allowText: !!field.allowCustomerText },
             (designedFile) => uploadFile(designedFile),
           );
-        } else if (field.enablePreview && field.previewTemplateUrl) {
+        } else if (field.enablePreview && canvasImage) {
           // Simpler mode: fixed placement, preview-only confirmation.
-          openPreview(field.previewTemplateUrl, field.previewPlacement, f, (confirmedFile) => uploadFile(confirmedFile));
+          openPreview(canvasImage, field.previewPlacement, f, (confirmedFile) => uploadFile(confirmedFile));
         } else {
           uploadFile(f);
         }
