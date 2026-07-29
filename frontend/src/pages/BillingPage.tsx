@@ -146,7 +146,21 @@ export function BillingPage() {
       api.post('/billing/subscribe', { planName }).then((r) => r.data.data),
     onSuccess: ({ confirmationUrl }) => {
       setUpgradeError(null);
-      if (confirmationUrl) window.location.href = confirmationUrl;
+      // Shopify's billing confirmation page refuses to be shown inside an
+      // iframe (a security measure — otherwise a malicious app could spoof
+      // the real approval screen). This app runs embedded inside Shopify
+      // Admin's iframe, so plain `window.location.href` only navigates the
+      // iframe itself, which Shopify blocks outright — that's exactly the
+      // "not allowed" icon that showed up instead of the real confirmation
+      // page. `window.top` targets the actual browser tab instead, which is
+      // required to break out of the iframe for this specific navigation.
+      if (confirmationUrl) {
+        if (window.top) {
+          window.top.location.href = confirmationUrl;
+        } else {
+          window.location.href = confirmationUrl;
+        }
+      }
     },
     onError: (err: any) => {
       const message =
