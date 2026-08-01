@@ -9,6 +9,7 @@ import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import { WebhooksService } from './webhooks.service';
 import { Merchant } from '../auth/entities/merchant.entity';
+import { Subscription, SubscriptionStatus } from '../billing/entities/subscription.entity';
 
 @ApiTags('webhooks')
 @Controller('webhooks')
@@ -20,6 +21,8 @@ export class WebhooksController {
     private readonly configService: ConfigService,
     @InjectRepository(Merchant)
     private readonly merchantRepo: Repository<Merchant>,
+    @InjectRepository(Subscription)
+    private readonly subRepo: Repository<Subscription>,
   ) {}
 
   private verifyWebhook(req: any, hmacHeader: string, topic: string, shop: string): void {
@@ -63,7 +66,22 @@ export class WebhooksController {
   ) {
     this.verifyWebhook(req, hmac, 'app/uninstalled', shop);
     this.logger.log(`App uninstalled for shop: ${shop}`);
+    const merchant = await this.merchantRepo.findOne({ where: { shopDomain: shop } });
     await this.merchantRepo.update({ shopDomain: shop }, { isActive: false, uninstalledAt: new Date() });
+    if (merchant) {
+      // Shopify itself automatically cancels any active app subscription
+      // charge when the app is uninstalled — this just brings our own
+      // record in line with that, so a future reinstall starts from the
+      // free plan by default instead of showing a paid plan Shopify isn't
+      // actually charging for anymore.
+      const result = await this.subRepo.update(
+        { merchantId: merchant.id, status: SubscriptionStatus.ACTIVE },
+        { status: SubscriptionStatus.CANCELLED },
+      );
+      if (result.affected) {
+        this.logger.log(`Cancelled ${result.affected} active subscription(s) for ${shop} on uninstall`);
+      }
+    }
     return { ok: true };
   }
 

@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
 import { Upload } from '../uploads/entities/upload.entity';
 import { Merchant } from '../auth/entities/merchant.entity';
+import { Subscription } from '../billing/entities/subscription.entity';
 import { WebhooksController } from './webhooks.controller';
 import { WebhooksService } from './webhooks.service';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -12,7 +13,7 @@ import { ShopifyTokenModule } from '../shopify-token/shopify-token.module';
 @Module({
   imports: [
     ConfigModule,
-    TypeOrmModule.forFeature([Upload, Merchant]),
+    TypeOrmModule.forFeature([Upload, Merchant, Subscription]),
     NotificationsModule,
     ProductsModule,
     ShopifyTokenModule,
