@@ -7,6 +7,7 @@ import { Plan, PlanName } from '../plans/entities/plan.entity';
 import { Merchant } from '../auth/entities/merchant.entity';
 import { AppSettings } from '../admin/entities/app-settings.entity';
 import { ShopifyTokenService } from '../shopify-token/shopify-token.service';
+import { decideTestCharge } from './dev-store.util';
 
 @Injectable()
 export class BillingService {
@@ -75,13 +76,26 @@ export class BillingService {
     }
 
     const trialDays = await this.getDefaultTrialDays();
-    // Global env override still works (e.g. for staging), OR automatically
-    // for any merchant we detected as a development store at install time —
-    // Shopify would reject a real charge against them anyway, but marking
-    // it explicitly lets them actually test the upgrade flow instead of
-    // hitting a confusing billing error.
-    const isTestCharge = process.env.SHOPIFY_BILLING_TEST_MODE === 'true' || merchant.isDevelopmentStore;
     const accessToken = await this.shopifyTokenService.getValidAccessToken(merchant);
+
+    // Decide test-vs-live per shop, at charge time, by asking Shopify whether
+    // this is a development store (shop.plan.partnerDevelopment) rather than
+    // trusting the plan-name string captured at install. A development store
+    // can never hold a payment method, so a LIVE charge against one makes
+    // Shopify redirect the merchant to Settings → Billing to add a card and
+    // the flow dead-ends at admin.shopify.com/login?...errorHint=client_api_error.
+    // The env override (SHOPIFY_BILLING_TEST_MODE=true) still forces test mode.
+    const chargeDecision = await decideTestCharge({
+      shopDomain: merchant.shopDomain,
+      accessToken,
+      storedIsDevelopmentStore: merchant.isDevelopmentStore,
+      storedPlanName: merchant.shopPlanName,
+    });
+    const isTestCharge = chargeDecision.test;
+    this.logger.log(
+      `Creating ${isTestCharge ? 'TEST' : 'LIVE'} charge for ${merchant.shopDomain} ` +
+        `(plan: ${plan.displayName}, reason: ${chargeDecision.reason})`,
+    );
 
     // Ask Shopify itself to create the subscription and hand back a real,
     // signed confirmation URL. We must never build this URL ourselves —

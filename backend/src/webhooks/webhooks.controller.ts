@@ -85,6 +85,104 @@ export class WebhooksController {
     return { ok: true };
   }
 
+  // ---------------------------------------------------------------------------
+  // app_subscriptions/update
+  //
+  // The authoritative signal for a subscription changing state OUTSIDE the
+  // app's own UI: a merchant cancelling from Shopify admin → Settings →
+  // Billing, a recurring charge failing (active → frozen), an expiry, or the
+  // merchant approving/declining on the confirmation screen.
+  //
+  // Without this handler the app only learns about subscription state when the
+  // merchant reopens the billing page, so a cancellation made on Shopify's
+  // side leaves paid features unlocked indefinitely. Shopify's billing review
+  // checks specifically for this topic — it's the piece that was missing.
+  //
+  // Whatever Shopify reports here, we make our local `subscriptions` table
+  // match it.
+  // ---------------------------------------------------------------------------
+  @Post('app_subscriptions/update')
+  @HttpCode(200)
+  async appSubscriptionsUpdate(
+    @Req() req: any,
+    @Headers('x-shopify-hmac-sha256') hmac: string,
+    @Headers('x-shopify-shop-domain') shop: string,
+    @Body() body: any,
+  ) {
+    // Verify first — an unverified billing webhook must never mutate state.
+    this.verifyWebhook(req, hmac, 'app_subscriptions/update', shop);
+
+    const sub = body?.app_subscription;
+    if (!sub?.admin_graphql_api_id) {
+      this.logger.warn(`app_subscriptions/update for ${shop} had no subscription payload`);
+      return { ok: true };
+    }
+
+    const shopifyChargeId: string = sub.admin_graphql_api_id;
+    const shopifyStatus: string = String(sub.status ?? '').toUpperCase();
+    this.logger.log(
+      `app_subscriptions/update for ${shop}: ${sub.name} -> ${shopifyStatus}`,
+    );
+
+    const merchant = await this.merchantRepo.findOne({ where: { shopDomain: shop } });
+    if (!merchant) {
+      // No merchant row (e.g. already fully uninstalled). Ack so Shopify
+      // doesn't retry forever.
+      return { ok: true };
+    }
+
+    if (shopifyStatus === 'ACTIVE') {
+      // Promote the row we created for this charge. Match on the Shopify
+      // charge id so we never promote the wrong plan.
+      const existing = await this.subRepo.findOne({
+        where: { merchantId: merchant.id, shopifyChargeId },
+      });
+
+      if (existing) {
+        // Demote any other active row first, so the merchant never ends up
+        // with two active subscriptions at once.
+        await this.subRepo.update(
+          { merchantId: merchant.id, status: SubscriptionStatus.ACTIVE },
+          { status: SubscriptionStatus.CANCELLED },
+        );
+        await this.subRepo.update(existing.id, {
+          status: SubscriptionStatus.ACTIVE,
+          shopifyChargeStatus: shopifyStatus,
+          currentPeriodEnd: sub.current_period_end
+            ? new Date(sub.current_period_end)
+            : existing.currentPeriodEnd,
+        });
+        this.logger.log(`Subscription ${shopifyChargeId} for ${shop} is now ACTIVE.`);
+      }
+      return { ok: true };
+    }
+
+    // Anything NOT active — CANCELLED, DECLINED, EXPIRED, FROZEN — must not keep
+    // granting a paid plan. Only touch the row for THIS charge, so a declined
+    // upgrade can't cancel a still-valid existing plan.
+    const affectedRow = await this.subRepo.findOne({
+      where: { merchantId: merchant.id, shopifyChargeId },
+    });
+
+    if (affectedRow && affectedRow.status === SubscriptionStatus.ACTIVE) {
+      await this.subRepo.update(affectedRow.id, {
+        status: SubscriptionStatus.CANCELLED,
+        shopifyChargeStatus: shopifyStatus,
+        cancelledAt: new Date(),
+      });
+      this.logger.log(
+        `Subscription ${shopifyChargeId} for ${shop} moved to ${shopifyStatus}; merchant reverts to free.`,
+      );
+    } else if (affectedRow) {
+      // Pending/other → just record Shopify's status, don't grant anything.
+      await this.subRepo.update(affectedRow.id, {
+        shopifyChargeStatus: shopifyStatus,
+      });
+    }
+
+    return { ok: true };
+  }
+
   @Post('orders/create')
   @HttpCode(200)
   async ordersCreate(

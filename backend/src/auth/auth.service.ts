@@ -9,6 +9,7 @@ import { Merchant } from './entities/merchant.entity';
 import { AppSettings } from '../admin/entities/app-settings.entity';
 import { BillingService } from '../billing/billing.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
+import { fetchShopPlanInfo } from '../billing/dev-store.util';
 
 interface ShopifyTokenResponse {
   accessToken: string;
@@ -163,8 +164,20 @@ export class AuthService {
     // "trial" here — that's a LIVE store on its normal Shopify trial
     // period, a genuine future paying customer, not a dev store; treating
     // it as one would incorrectly waive real billing.
+    // Authoritative signal: Shopify's GraphQL shop.plan.partnerDevelopment is
+    // a boolean maintained by Shopify. The plan_name string match below is now
+    // only a fallback for when the GraphQL call can't be made, because that
+    // list is incomplete (Shopify also uses developer_preview,
+    // plus_partner_sandbox, staff_business, etc.) and, being captured only at
+    // install, went stale for existing merchants. A wrong `false` here creates
+    // a live charge on a dev store and dead-ends checkout at Shopify's billing
+    // settings. Since installMerchant() runs on every reinstall, the flag now
+    // self-heals for merchants whose stored value was wrong.
     const devStorePlanNames = ['affiliate', 'partner_test', 'staff'];
-    const isDevelopmentStore = devStorePlanNames.includes(shopInfo.plan_name);
+    const planInfo = await fetchShopPlanInfo(shop, token.accessToken);
+    const isDevelopmentStore =
+      planInfo?.partnerDevelopment ??
+      devStorePlanNames.includes(shopInfo.plan_name);
 
     if (merchant) {
       merchant.accessToken = token.accessToken;

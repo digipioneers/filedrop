@@ -18,6 +18,13 @@ api_version = "2026-07"
   topics = [ "app/uninstalled" ]
   uri = "/api/v1/webhooks/app/uninstalled"
 
+  # Authoritative signal for subscription state changing outside the app UI —
+  # merchant cancels from Shopify admin, charge fails/expires/frozen, or the
+  # approval screen is declined. Required for the Shopify billing review.
+  [[webhooks.subscriptions]]
+  topics = [ "app_subscriptions/update" ]
+  uri = "/api/v1/webhooks/app_subscriptions/update"
+
   [[webhooks.subscriptions]]
   topics = [ "orders/create" ]
   uri = "/api/v1/webhooks/orders/create"

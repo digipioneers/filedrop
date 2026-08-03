@@ -55,6 +55,7 @@ export class WebhooksService {
     // See shopify.app.toml's `[[webhooks.subscriptions]] compliance_topics`.
     const webhooks = [
       { topic: 'app/uninstalled',        address: `${appUrl}/api/v1/webhooks/app/uninstalled` },
+      { topic: 'app_subscriptions/update', address: `${appUrl}/api/v1/webhooks/app_subscriptions/update` },
       { topic: 'orders/create',          address: `${appUrl}/api/v1/webhooks/orders/create` },
       { topic: 'orders/updated',         address: `${appUrl}/api/v1/webhooks/orders/updated` },
       { topic: 'products/update',        address: `${appUrl}/api/v1/webhooks/products/update` },
@@ -157,6 +158,7 @@ export class WebhooksService {
   private async registerViaGraphQL(merchant: Merchant, appUrl: string, accessToken: string): Promise<void> {
     const topics = [
       { topic: 'APP_UNINSTALLED',        address: `${appUrl}/api/v1/webhooks/app/uninstalled` },
+      { topic: 'APP_SUBSCRIPTIONS_UPDATE', address: `${appUrl}/api/v1/webhooks/app_subscriptions/update` },
       { topic: 'ORDERS_CREATE',          address: `${appUrl}/api/v1/webhooks/orders/create` },
     ];
 
