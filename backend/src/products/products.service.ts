@@ -75,8 +75,33 @@ export class ProductsService {
   }
 
   async searchProducts(merchantId: string, query: string, limit = 20) {
+    // The picker reads from the locally-cached `products` table, which is only
+    // populated by syncProducts(). If a merchant never ran a manual sync, that
+    // table is empty and every search returns nothing — which is the "product
+    // search returns no results" bug. Self-heal: if the cache is empty, sync
+    // once on demand, then search.
+    const cachedCount = await this.productRepo.count({ where: { merchantId } });
+    if (cachedCount === 0) {
+      this.logger.log(
+        `Product cache empty for merchant ${merchantId}; running an on-demand sync before searching.`,
+      );
+      try {
+        await this.syncProducts(merchantId);
+      } catch (err: any) {
+        this.logger.error(`On-demand product sync failed: ${err?.message}`);
+      }
+    }
+
+    const trimmed = (query ?? '').trim();
+
+    // Empty query → list the first `limit` products (so opening the picker
+    // shows something immediately instead of a blank box).
+    const where = trimmed
+      ? { merchantId, isActive: true, title: Like(`%${trimmed}%`) }
+      : { merchantId, isActive: true };
+
     const products = await this.productRepo.find({
-      where: { merchantId, isActive: true, title: Like(`%${query}%`) },
+      where,
       take: limit,
       order: { title: 'ASC' },
     });
