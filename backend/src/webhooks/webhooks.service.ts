@@ -8,6 +8,7 @@ import { Merchant } from '../auth/entities/merchant.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ProductsService } from '../products/products.service';
 import { ShopifyTokenService } from '../shopify-token/shopify-token.service';
+import { OrderFilesService } from '../orders/order-files.service';
 
 @Injectable()
 export class WebhooksService {
@@ -22,6 +23,7 @@ export class WebhooksService {
     private readonly productsService: ProductsService,
     private readonly configService: ConfigService,
     private readonly shopifyTokenService: ShopifyTokenService,
+    private readonly orderFilesService: OrderFilesService,
   ) {}
 
   /**
@@ -351,6 +353,14 @@ export class WebhooksService {
 
     // Add Shopify order timeline entry
     await this.addOrderTimelineNote(merchant, order.id, uploads.length);
+
+    // Push the actual files onto the Shopify order so the merchant can preview
+    // and download them directly from the order page (native Metafields card).
+    await this.orderFilesService.attachUploadsToOrder(
+      merchant,
+      shopifyOrderId,
+      uploads,
+    );
 
     // In-app notification
     await this.notificationsService.notifyUpload(merchant.id, {
