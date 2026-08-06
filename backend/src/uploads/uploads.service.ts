@@ -10,6 +10,7 @@ import { StorageService } from '../storage/storage.service';
 import { SecurityService } from '../security/security.service';
 import { getImageDimensions } from '../common/utils/image-dimensions';
 import { buildDownloadFilename } from '../common/utils/download-filename.util';
+import { convertHeicToJpegIfNeeded, renameHeicToJpg } from '../common/utils/heic-support';
 import { CreateUploadFieldDto } from './dto/create-upload-field.dto';
 import { UpdateUploadFieldDto } from './dto/update-upload-field.dto';
 import { UploadFileDto } from './dto/upload-file.dto';
@@ -128,6 +129,17 @@ export class UploadsService {
   ): Promise<Upload> {
     const merchant = await this.merchantRepo.findOne({ where: { id: merchantId } });
     if (!merchant) throw new NotFoundException('Merchant not found');
+
+    // iPhone photos arrive as HEIC. Convert to JPEG up front so the stored file
+    // is viewable in every browser and all the validation below runs against
+    // the JPEG. Non-HEIC files pass through untouched.
+    const heic = await convertHeicToJpegIfNeeded(file.buffer, file.originalname);
+    if (heic.converted) {
+      file.buffer = heic.buffer;
+      file.size = heic.buffer.length;
+      file.originalname = renameHeicToJpg(file.originalname);
+      file.mimetype = 'image/jpeg';
+    }
 
     const field = dto.uploadFieldId
       ? await this.fieldRepo.findOne({ where: { id: dto.uploadFieldId, merchantId } })

@@ -22,6 +22,7 @@ const ALLOWED_MIMES: Record<string, Set<string>> = {
   [FieldType.IMAGE]: new Set([
     'image/jpeg','image/png','image/gif','image/webp',
     'image/bmp','image/tiff','image/svg+xml',
+    'image/heic','image/heif',   // iPhone photos (normally converted to JPEG on upload)
   ]),
   [FieldType.PDF]: new Set(['application/pdf']),
   [FieldType.VIDEO]: new Set([

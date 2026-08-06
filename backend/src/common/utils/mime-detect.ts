@@ -28,6 +28,21 @@ const SIGNATURES: Array<{ mime: string; bytes: (number | null)[] }> = [
 export function detectMimeType(buffer: Buffer): string {
   if (!buffer || buffer.length < 4) return 'application/octet-stream';
 
+  // HEIC/HEIF (iPhone photos): ISO-BMFF 'ftyp' box at bytes 4..7 with a HEIC
+  // brand at bytes 8..11. Checked BEFORE the generic table below because HEIC
+  // shares the 'ftyp' box with MP4/QuickTime and would otherwise be
+  // mis-detected as video/quicktime.
+  if (
+    buffer.length >= 12 &&
+    buffer[4] === 0x66 && buffer[5] === 0x74 &&
+    buffer[6] === 0x79 && buffer[7] === 0x70
+  ) {
+    const brand = buffer.toString('ascii', 8, 12).toLowerCase();
+    if (['heic', 'heix', 'heim', 'heis', 'heif', 'hevc', 'hevx', 'mif1', 'msf1'].includes(brand)) {
+      return 'image/heic';
+    }
+  }
+
   for (const sig of SIGNATURES) {
     let match = true;
     for (let i = 0; i < sig.bytes.length; i++) {

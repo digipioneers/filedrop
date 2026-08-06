@@ -2,7 +2,7 @@
   "name": "custom-file-upload-pro",
   "version": "1.0.0",
   "private": true,
-  "description": "Shopify app for customer file uploads \u2014 production-ready SaaS",
+  "description": "Shopify app for customer file uploads — production-ready SaaS",
   "scripts": {
     "setup": "node scripts/setup.js",
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
@@ -22,6 +22,7 @@
     "register-webhooks": "node scripts/register-webhooks.js"
   },
   "devDependencies": {
+    "@types/heic-convert": "^2.1.1",
     "concurrently": "^8.2.2"
   },
   "engines": {

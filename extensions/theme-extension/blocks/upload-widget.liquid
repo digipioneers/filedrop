@@ -753,7 +753,14 @@
     fileInput.style.cssText = 'position:absolute;inset:0;opacity:0;cursor:pointer;';
     fileInput.multiple = field.maxFiles > 1;
     if (field.allowedExtensions?.length) {
-      fileInput.accept = field.allowedExtensions.map((e) => '.' + e).join(',');
+      var acceptExts = field.allowedExtensions.map(function (e) { return '.' + e; });
+      // iPhone photos are HEIC. They're converted to JPEG on the server, so a
+      // field that allows common image types should also let HEIC be picked.
+      var allowsImages = field.allowedExtensions.some(function (e) {
+        return ['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic', 'heif'].indexOf(e.toLowerCase()) !== -1;
+      });
+      if (allowsImages) { acceptExts.push('.heic', '.heif'); }
+      fileInput.accept = acceptExts.join(',');
     } else if (field.fieldType === 'image') {
       fileInput.accept = 'image/*';
     }
@@ -917,7 +924,13 @@
       }
 
       const ext = file.name.split('.').pop()?.toLowerCase();
-      if (field.allowedExtensions?.length && !field.allowedExtensions.includes(ext)) {
+      // Let iPhone HEIC through even on a "jpg/png only" field — the server
+      // converts it to JPEG, so it satisfies the merchant's image intent.
+      var heicOk = (ext === 'heic' || ext === 'heif') &&
+        field.allowedExtensions?.some(function (e) {
+          return ['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic', 'heif'].indexOf(e.toLowerCase()) !== -1;
+        });
+      if (field.allowedExtensions?.length && !field.allowedExtensions.includes(ext) && !heicOk) {
         showError(`File type .${ext} is not allowed`);
         return;
       }
