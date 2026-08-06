@@ -7,6 +7,7 @@ import {
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../utils/api';
+import { ResourceAssignmentPicker } from '../components/ResourceAssignmentPicker';
 
 const FIELD_TYPES = [
   { label: 'Image Upload', value: 'image' },
@@ -83,6 +84,18 @@ export function UploadFieldFormPage() {
         maxWidth: field.maxWidth ?? '',
         minHeight: field.minHeight ?? '',
         maxHeight: field.maxHeight ?? '',
+        // These are nullable JSON columns on the backend. When a saved field
+        // has null for them, spreading `...field` overwrites the default []
+        // with null, and the later `.map()` in the Assignment tab throws —
+        // which is what triggered the "Something went wrong" error boundary.
+        // Coerce them back to arrays here so the tab always renders.
+        assignedTags: Array.isArray(field.assignedTags) ? field.assignedTags : [],
+        assignedResourceIds: Array.isArray(field.assignedResourceIds)
+          ? field.assignedResourceIds
+          : [],
+        allowedExtensions: Array.isArray(field.allowedExtensions)
+          ? field.allowedExtensions
+          : [],
       });
     }
   }, [field]);
@@ -162,8 +175,9 @@ export function UploadFieldFormPage() {
 
   const addTag = () => {
     const tag = newTag.trim();
-    if (tag && !form.assignedTags.includes(tag)) {
-      set('assignedTags')([...form.assignedTags, tag]);
+    const current = Array.isArray(form.assignedTags) ? form.assignedTags : [];
+    if (tag && !current.includes(tag)) {
+      set('assignedTags')([...current, tag]);
     }
     setNewTag('');
   };
@@ -350,9 +364,9 @@ export function UploadFieldFormPage() {
                           />
                         </div>
                         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
-                          {form.assignedTags.map((tag) => (
+                          {(form.assignedTags ?? []).map((tag) => (
                             <Tag key={tag} onRemove={() =>
-                              set('assignedTags')(form.assignedTags.filter((t) => t !== tag))
+                              set('assignedTags')((form.assignedTags ?? []).filter((t) => t !== tag))
                             }>
                               {tag}
                             </Tag>
@@ -360,10 +374,14 @@ export function UploadFieldFormPage() {
                         </div>
                       </div>
                     )}
-                    {(form.assignmentType === 'product' || form.assignmentType === 'variant' || form.assignmentType === 'collection') && (
-                      <Banner tone="info">
-                        After saving, you can assign specific {form.assignmentType === 'product' ? 'products' : form.assignmentType === 'variant' ? 'variants' : 'collections'} from the field detail page using the Shopify product picker.
-                      </Banner>
+                    {(form.assignmentType === 'product' ||
+                      form.assignmentType === 'variant' ||
+                      form.assignmentType === 'collection') && (
+                      <ResourceAssignmentPicker
+                        mode={form.assignmentType as 'product' | 'variant' | 'collection'}
+                        selectedIds={form.assignedResourceIds}
+                        onChange={(ids) => set('assignedResourceIds')(ids)}
+                      />
                     )}
                   </FormLayout>
                 )}

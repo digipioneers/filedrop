@@ -271,8 +271,9 @@ export function SettingsPage() {
                     { label: '6 hours', value: '21600' },
                     { label: '24 hours', value: '86400' },
                     { label: '7 days', value: '604800' },
+                    { label: 'Never expires', value: '0' },
                   ]}
-                  helpText="How long download links remain valid"
+                  helpText="How long download links remain valid. 'Never expires' issues permanent links served through the app instead of temporary storage links."
                 />
               </div>
             </Card>
