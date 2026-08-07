@@ -18,6 +18,8 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { StorefrontService } from './storefront.service';
+import type { Response } from 'express';
+import { verifyDownloadToken } from '../uploads/download-token.util';
 
 /**
  * Public API used by the Shopify theme extension (upload-widget.liquid).
@@ -128,8 +130,36 @@ export class StorefrontController {
   }
 
   /**
-   * POST /storefront/upload/rebind-cart-token
+   * GET /storefront/file/:uploadId?token=<hmac>
    *
+   * Public, permanent, token-authed preview/download for a customer upload.
+   * This is the URL written into the Shopify order's line-item property, so a
+   * store owner can click it straight from the order page to preview and
+   * download the file. The HMAC token makes the link unguessable without any
+   * login; there's no expiry, so it keeps working for the life of the order.
+   *
+   * ?download=1 forces a download; otherwise images render inline in the
+   * browser (preview).
+   */
+  @Get('file/:uploadId')
+  @ApiOperation({ summary: 'Public preview/download for a customer upload (token-authed)' })
+  async getFile(
+    @Param('uploadId') uploadId: string,
+    @Query('token') token: string,
+    @Query('download') download: string,
+    @Res() res: Response,
+  ) {
+    if (!verifyDownloadToken(uploadId, token)) {
+      throw new UnauthorizedException('Invalid file token');
+    }
+    const { url } = await this.storefrontService.getPublicFileUrl(
+      uploadId,
+      download === '1',
+    );
+    return res.redirect(302, url);
+  }
+
+  /**
    * Shopify does not assign a cart's final, durable token until an item is
    * actually added to it — but this widget uploads files BEFORE "Add to
    * Cart" is clicked, so the token captured at upload time can be a

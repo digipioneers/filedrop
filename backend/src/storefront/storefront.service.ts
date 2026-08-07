@@ -14,6 +14,7 @@ import { AppSettings } from '../admin/entities/app-settings.entity';
 import { v4 as uuid } from 'uuid';
 import { getImageDimensions } from '../common/utils/image-dimensions';
 import { buildDownloadFilename } from '../common/utils/download-filename.util';
+import { makeDownloadToken } from '../uploads/download-token.util';
 
 @Injectable()
 export class StorefrontService {
@@ -119,6 +120,32 @@ export class StorefrontService {
     return { buffer, mimeType };
   }
 
+  /**
+   * Resolve a short-lived storage URL for a customer upload, used by the public
+   * token-authed preview/download route. Token verification happens in the
+   * controller; by the time we're here the request is already authorized.
+   */
+  async getPublicFileUrl(
+    uploadId: string,
+    forceDownload: boolean,
+  ): Promise<{ url: string }> {
+    const upload = await this.uploadRepo.findOne({ where: { id: uploadId } });
+    if (!upload) throw new NotFoundException('Upload not found');
+    if (upload.status === UploadStatus.INFECTED) {
+      throw new ForbiddenException('File is not available');
+    }
+
+    // Presign for a short window purely to redirect the browser to storage.
+    // The permanence lives in the token on our own URL, not in this one.
+    const filename = buildDownloadFilename(upload);
+    const url = await this.storageService.getSignedDownloadUrl(
+      upload.s3Key,
+      forceDownload ? filename : undefined,
+      300,
+    );
+    return { url };
+  }
+
   async getPublicSettings(shopOrMerchantId: string) {
     const merchantId = await this.resolveMerchantId(shopOrMerchantId);
     const s = await this.settingsRepo.findOne({ where: { merchantId } });
@@ -204,7 +231,23 @@ export class StorefrontService {
 
     this.virusScanAsync(upload, merchant).catch(e => this.logger.error(e.message));
 
-    return { uploadId: upload.id, fileName: sanitized, fileSize: file.size, status: 'pending' };
+    const publicBase = (process.env.APP_URL || process.env.BACKEND_URL || '').replace(/\/$/, '');
+    const token = makeDownloadToken(upload.id);
+    const previewUrl = `${publicBase}/api/v1/storefront/file/${upload.id}?token=${token}`;
+    const downloadUrl = `${previewUrl}&download=1`;
+
+    return {
+      uploadId: upload.id,
+      id: upload.id,
+      fileName: sanitized,
+      fileSize: file.size,
+      status: 'pending',
+      // Public, permanent, token-authed URLs. The widget writes previewUrl into
+      // a Shopify line-item property so it shows under the product on the order.
+      previewUrl,
+      downloadUrl,
+      isImage: (upload.mimeType || '').startsWith('image/'),
+    };
   }
 
   private async virusScanAsync(upload: Upload, merchant: Merchant) {

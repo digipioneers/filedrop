@@ -304,6 +304,9 @@
   widget.style.setProperty('--cfup-btn-color', BTN_COLOR);
 
   let allUploadedIds = [];
+  // Preview URLs for each uploaded file, written as Shopify line-item
+  // properties so the image shows directly under the product on the order.
+  let allUploadedPreviews = [];
   let cropper = null;
   let pendingEditorCallback = null;
   // Cached cart token for the lifetime of this page load — avoids
@@ -972,10 +975,14 @@
               uploadedFiles.push(res.data);
               uploadedFileIds.push(res.data.id);
               allUploadedIds.push(res.data.id);
+              if (res.data.previewUrl) {
+                allUploadedPreviews.push(res.data.previewUrl);
+              }
               updateFileItem(fileItem, 'success', '✓ Uploaded');
               progressWrapper.style.display = 'none';
               addRemoveButton(fileItem, res.data.id, uploadedFiles, uploadedFileIds);
               persistUploadIds();
+              syncLineItemProperties();
               resolve(res);
             } else {
               try {
@@ -1014,9 +1021,13 @@
         const idx = idsArr.indexOf(uploadId);
         if (idx !== -1) { filesArr.splice(idx, 1); idsArr.splice(idx, 1); }
         const globalIdx = allUploadedIds.indexOf(uploadId);
-        if (globalIdx !== -1) allUploadedIds.splice(globalIdx, 1);
+        if (globalIdx !== -1) {
+          allUploadedIds.splice(globalIdx, 1);
+          allUploadedPreviews.splice(globalIdx, 1);
+        }
         item.remove();
         persistUploadIds();
+        syncLineItemProperties();
       });
       item.appendChild(btn);
     }
@@ -1159,6 +1170,42 @@
         },
       }),
     }).catch(() => {});
+  }
+
+  /**
+   * Write the uploaded files as Shopify LINE-ITEM PROPERTIES on the product
+   * form. Unlike cart attributes, line-item properties are attached to the
+   * specific product line, so Shopify renders them directly under that product
+   * on the order page — which is where the store owner wants to see the file.
+   *
+   * We inject hidden inputs named `properties[Uploaded file]`,
+   * `properties[Uploaded file 2]`, … into the product's add-to-cart <form>.
+   * The value is the public preview URL, so it shows as a clickable link the
+   * merchant can open to preview/download. This travels with the order
+   * guaranteed — no dependency on cart-token matching.
+   */
+  function syncLineItemProperties() {
+    // Find the product form this widget belongs to.
+    const form =
+      widget.closest('form[action*="/cart/add"]') ||
+      document.querySelector('form[action*="/cart/add"]');
+    if (!form) return;
+
+    // Remove any properties we previously injected, so removals are reflected.
+    form.querySelectorAll('input[data-cfup-prop="1"]').forEach((el) => el.remove());
+
+    allUploadedPreviews.forEach((url, i) => {
+      if (!url) return;
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.setAttribute('data-cfup-prop', '1');
+      // Shopify shows the property label + value under the line item. A blank
+      // label prefix ("_"?) would hide it; we want it visible, so use a clear
+      // human label. Multiple files get numbered labels.
+      input.name = 'properties[Uploaded file' + (i === 0 ? '' : ' ' + (i + 1)) + ']';
+      input.value = url;
+      form.appendChild(input);
+    });
   }
 
   // ── Init ──────────────────────────────────────────────────────────────────
