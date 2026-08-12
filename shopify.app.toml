@@ -4,7 +4,7 @@ application_url = "https://zestful-serenity-production-11ac.up.railway.app"
 embedded = true
 
 [access_scopes]
-scopes = "read_products,write_products,read_orders,write_orders,read_customers"
+scopes = "read_products,write_products,read_orders,write_orders,read_customers,write_files"
 
 [auth]
 redirect_urls = [
