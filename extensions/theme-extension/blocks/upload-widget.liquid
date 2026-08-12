@@ -354,11 +354,24 @@
     const origFetch = window.fetch;
     window.fetch = function (input, init) {
       const url = typeof input === 'string' ? input : (input && input.url);
+      const isCartAdd = looksLikeCartAdd(url) && (!init || !init.method || init.method.toUpperCase() === 'POST');
       const p = origFetch.apply(this, arguments);
-      if (looksLikeCartAdd(url) && (!init || !init.method || init.method.toUpperCase() === 'POST')) {
-        p.then((r) => { if (r.ok) setTimeout(rebindUploadsToRealCartToken, 300); }).catch(() => {});
-      }
-      return p;
+      if (!isCartAdd) return p;
+      // IMPORTANT: chain the rebind INTO the promise handed back to the
+      // theme's own code, rather than firing it separately on a delayed
+      // timer. Themes that do `fetch('/cart/add', ...).then(() =>
+      // location.href = '/checkout')` (no cart page/drawer step — an
+      // immediate redirect straight to checkout) will navigate the instant
+      // that promise resolves. A detached setTimeout(...,300) loses that
+      // race every time: the navigation tears down the page mid-flight and
+      // kills our pending rebind fetch before it can complete, silently
+      // leaving the upload bound to its stale cart token forever. Awaiting
+      // here makes the theme's own .then()-chained navigation wait for us
+      // instead — same resolved Response, just slightly later.
+      return p.then(async (r) => {
+        if (r.ok) { try { await rebindUploadsToRealCartToken(); } catch (e) {} }
+        return r;
+      });
     };
 
     const OrigXHR = window.XMLHttpRequest;
