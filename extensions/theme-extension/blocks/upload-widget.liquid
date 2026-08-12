@@ -673,6 +673,30 @@
 
   // ── Fetch fields ─────────────────────────────────────────────────────────
 
+  /**
+   * Shopify's dynamic/express checkout buttons (Buy it now, Shop Pay,
+   * PayPal, Google Pay — anything rendered by the `payment_button` Liquid
+   * filter, always wrapped in a `.shopify-payment-button` div regardless of
+   * theme) are documented to skip cart attributes AND line-item properties.
+   * They never trigger a `/cart/add` our widget can see, so an uploaded
+   * file can never be linked back to an order placed through one of those
+   * buttons — no cart-token to rebind, no property to attach, nothing for
+   * the orders/create webhook to match. When this product has a REQUIRED
+   * upload field, hide those buttons so the customer is forced through
+   * "Add to cart" -> Checkout, the only flow this app can actually track.
+   * Restored (shown again) when no field on the current variant requires
+   * an upload, e.g. after a variant:changed swap.
+   */
+  function setExpressCheckoutVisible(visible) {
+    const form =
+      widget.closest('form[action*="/cart/add"]') ||
+      document.querySelector('form[action*="/cart/add"]');
+    const scope = form || document;
+    scope.querySelectorAll('.shopify-payment-button').forEach((el) => {
+      el.style.display = visible ? '' : 'none';
+    });
+  }
+
   async function loadFields() {
     const variantId = widget.dataset.variantId;
     try {
@@ -686,6 +710,7 @@
       const json = await res.json();
       const fields = json.data || [];
       fields.forEach((field) => container.appendChild(buildField(field)));
+      setExpressCheckoutVisible(!fields.some((f) => f.required));
     } catch (e) {
       console.error('[CFUP] Failed to load upload fields:', e);
     }
