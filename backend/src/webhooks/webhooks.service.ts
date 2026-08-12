@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, IsNull } from 'typeorm';
+import { Repository, In, IsNull, Between } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { Upload } from '../uploads/entities/upload.entity';
@@ -455,7 +455,92 @@ export class WebhooksService {
       });
     }
 
+    // (4) LAST-RESORT heuristic: link by product + time + (preferably) email.
+    //
+    // Some checkout paths strip EVERYTHING our widget attaches: "Buy it now",
+    // Shop Pay and the other dynamic/express buttons send no line-item
+    // properties and no cart attributes, and the order's cart_token won't match
+    // the provisional token captured before checkout. In that case none of
+    // (1)-(3) can fire, and the customised image would silently never link —
+    // which is exactly the empty-metafield / missing-from-Orders symptom.
+    //
+    // The upload row already stores productId, variantId, customerEmail and
+    // createdAt, and the order gives us the same facts, so we can still match:
+    // the most recent still-unlinked upload(s) for THIS merchant, for a product
+    // that's actually in THIS order, created shortly before it. We prefer an
+    // email match and only fall back to product+time when the upload carries no
+    // email (the common case, since shoppers upload before entering one).
+    if (!uploads.length) {
+      uploads = await this.resolveUploadsByHeuristic(merchantId, order);
+      if (uploads.length) {
+        this.logger.warn(
+          `⚠️  Linked ${uploads.length} upload(s) to order ${order.id} via LAST-RESORT ` +
+            `product/time heuristic (no cart_token / properties / note_attributes matched). ` +
+            `This is expected for Buy-it-now / Shop Pay checkouts.`,
+        );
+      }
+    }
+
     return { uploads, lineItemIdByUpload };
+  }
+
+  /**
+   * Heuristic matcher — see caller. Deliberately conservative:
+   *   • same merchant, not yet linked to any order, not deleted
+   *   • productId is one of the products actually on this order
+   *   • createdAt within a window ending at the order time (never after it)
+   *   • if the upload has a customerEmail, it must equal the order's email
+   * Returns at most one upload per matching product line (the newest), so a
+   * single order can't vacuum up every unrelated upload for a popular product.
+   */
+  private async resolveUploadsByHeuristic(
+    merchantId: string,
+    order: any,
+  ): Promise<Upload[]> {
+    const lineItems: any[] = Array.isArray(order?.line_items) ? order.line_items : [];
+    const productIds = Array.from(
+      new Set(
+        lineItems
+          .map((li) => (li?.product_id != null ? String(li.product_id) : null))
+          .filter((v): v is string => !!v),
+      ),
+    );
+    if (!productIds.length) return [];
+
+    // Window: from HEURISTIC_WINDOW_HOURS before the order, up to the order
+    // time plus a small buffer for clock skew. Never match uploads created
+    // after the order was placed.
+    const HEURISTIC_WINDOW_HOURS = 12;
+    const orderTime = order?.created_at ? new Date(order.created_at) : new Date();
+    const windowStart = new Date(orderTime.getTime() - HEURISTIC_WINDOW_HOURS * 3600_000);
+    const windowEnd = new Date(orderTime.getTime() + 10 * 60_000);
+
+    const candidates = await this.uploadRepo.find({
+      where: {
+        merchantId,
+        productId: In(productIds),
+        orderId: IsNull(),
+        deletedAt: IsNull(),
+        createdAt: Between(windowStart, windowEnd),
+      },
+      order: { createdAt: 'DESC' },
+    });
+    if (!candidates.length) return [];
+
+    const orderEmail = (order?.email || '').trim().toLowerCase();
+
+    // Keep the newest still-unlinked upload per product, honouring the email
+    // constraint when the upload actually has one.
+    const pickedByProduct = new Map<string, Upload>();
+    for (const u of candidates) {
+      if (!u.productId || pickedByProduct.has(u.productId)) continue;
+      if (u.customerEmail && orderEmail && u.customerEmail.trim().toLowerCase() !== orderEmail) {
+        continue; // email present on both and they disagree → not this shopper
+      }
+      pickedByProduct.set(u.productId, u);
+    }
+
+    return [...pickedByProduct.values()];
   }
 
   /** Pull upload ids out of the `_cfup_upload_ids` order note attribute. */
