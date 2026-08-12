@@ -376,20 +376,26 @@ export class WebhooksService {
     // Add Shopify order timeline entry
     await this.addOrderTimelineNote(merchant, order.id, uploads.length);
 
-    // Push the actual files onto the Shopify order so the merchant can preview
-    // and download them directly from the order page (native Metafields card).
-    await this.orderFilesService.attachUploadsToOrder(
-      merchant,
-      shopifyOrderId,
-      uploads,
-    );
-
-    // In-app notification
+    // In-app notification (fast, local DB write)
     await this.notificationsService.notifyUpload(merchant.id, {
       fileName: uploads.length > 1 ? `${uploads.length} files` : uploads[0].originalFileName,
       orderNumber: orderId,
       customerEmail: order.email,
     });
+
+    // Push the actual files onto the Shopify order so the merchant can preview
+    // and download them directly from the order page (native Metafields card).
+    //
+    // Deliberately NOT awaited: pushing bytes to Shopify Files and then waiting
+    // for image processing to reach READY can take several seconds, which would
+    // risk this webhook exceeding Shopify's response window and being retried.
+    // The uploads are already linked above, so this safely completes in the
+    // background. attachUploadsToOrder is best-effort and never throws.
+    void this.orderFilesService
+      .attachUploadsToOrder(merchant, shopifyOrderId, uploads)
+      .catch((e) =>
+        this.logger.error(`Background attachUploadsToOrder failed: ${e?.message}`),
+      );
   }
 
   /**
@@ -594,6 +600,26 @@ export class WebhooksService {
   }
 
   async handleOrderUpdate(shopDomain: string, order: any): Promise<void> {
+    const merchant = await this.merchantRepo.findOne({ where: { shopDomain } });
+    if (!merchant) return;
+
+    // Recovery: if this order has linked Filedrop uploads but its file card is
+    // still empty (e.g. the original push happened before the file finished
+    // processing, or hit a transient error), re-attach them now. Guarded by an
+    // emptiness check inside attachUploadsIfMissing so orders that are already
+    // fine are left untouched and no duplicate files are created.
+    const shopifyOrderId = String(order.id);
+    const uploads = await this.uploadRepo.find({
+      where: { merchantId: merchant.id, shopifyOrderId, deletedAt: IsNull() },
+    });
+    if (uploads.length) {
+      void this.orderFilesService
+        .attachUploadsIfMissing(merchant, shopifyOrderId, uploads)
+        .catch((e) =>
+          this.logger.error(`orders/updated re-attach failed: ${e?.message}`),
+        );
+    }
+
     this.logger.log(`Order updated: ${order.id} on ${shopDomain}`);
   }
 

@@ -202,7 +202,7 @@ export class OrderFilesService {
     }
   }
 
-  /** stagedUploadsCreate → PUT bytes → fileCreate. Returns the file GID. */
+  /** stagedUploadsCreate → PUT bytes → fileCreate → wait for READY. Returns the file GID. */
   private async pushOneFileToShopify(
     shopDomain: string,
     accessToken: string,
@@ -211,6 +211,7 @@ export class OrderFilesService {
     const buffer = await this.storageService.getFileBuffer(upload.s3Key);
     const filename = upload.originalFileName || upload.sanitizedFileName || 'upload';
     const mime = upload.mimeType || 'application/octet-stream';
+    const isImage = mime.startsWith('image/');
 
     // 1) staged target
     const staged = await this.gql(
@@ -234,6 +235,10 @@ export class OrderFilesService {
       },
     );
 
+    const stagedErrs = staged?.stagedUploadsCreate?.userErrors ?? [];
+    if (stagedErrs.length) {
+      throw new Error(`stagedUploadsCreate errors: ${JSON.stringify(stagedErrs)}`);
+    }
     const target = staged?.stagedUploadsCreate?.stagedTargets?.[0];
     if (!target?.url) {
       throw new Error('stagedUploadsCreate returned no target');
@@ -268,7 +273,7 @@ export class OrderFilesService {
         files: [
           {
             alt: `Customer upload: ${filename}`,
-            contentType: mime.startsWith('image/') ? 'IMAGE' : 'FILE',
+            contentType: isImage ? 'IMAGE' : 'FILE',
             originalSource: target.resourceUrl,
           },
         ],
@@ -279,7 +284,122 @@ export class OrderFilesService {
     if (errs.length) {
       throw new Error(`fileCreate errors: ${JSON.stringify(errs)}`);
     }
-    return created?.fileCreate?.files?.[0]?.id ?? null;
+    const file = created?.fileCreate?.files?.[0];
+    const gid: string | null = file?.id ?? null;
+    if (!gid) {
+      throw new Error('fileCreate returned no file id');
+    }
+
+    // 4) CRITICAL: a file created from a staged upload starts as UPLOADED and
+    // is processed asynchronously to READY (or FAILED). A list.file_reference
+    // metafield can only reference a file that is in the READY state — setting
+    // it against an UPLOADED/PROCESSING file fails with a "not in READY state"
+    // userError. The old code set the metafield immediately, so it silently
+    // failed and the order's file card stayed empty. Wait for READY here so the
+    // reference we hand to metafieldsSet is always valid.
+    const status =
+      file.fileStatus === 'READY'
+        ? 'READY'
+        : await this.waitForFileReady(shopDomain, accessToken, gid);
+
+    if (status !== 'READY') {
+      this.logger.warn(
+        `File "${filename}" (${gid}) did not reach READY (status=${status}); ` +
+          `skipping its metafield reference to avoid a broken/empty link.`,
+      );
+      return null;
+    }
+
+    return gid;
+  }
+
+  /**
+   * Poll a file's status until it is READY or FAILED (or we run out of tries).
+   * Small customer images normally reach READY within a second or two; the
+   * generous ceiling here is safe because attachUploadsToOrder runs in the
+   * background, off the webhook's response path.
+   */
+  private async waitForFileReady(
+    shopDomain: string,
+    accessToken: string,
+    gid: string,
+    maxAttempts = 20,
+    delayMs = 1000,
+  ): Promise<string> {
+    const query = `query fileStatus($id: ID!) {
+      node(id: $id) { ... on File { fileStatus } }
+    }`;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const data = await this.gql(shopDomain, accessToken, query, { id: gid });
+        const status = data?.node?.fileStatus;
+        if (status === 'READY' || status === 'FAILED') return status;
+      } catch (err: any) {
+        // Transient read error — keep polling rather than giving up.
+        this.logger.warn(`waitForFileReady poll error for ${gid}: ${err?.message}`);
+      }
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+    return 'TIMEOUT';
+  }
+
+  /**
+   * Recovery path: attach files to an order ONLY if it doesn't already have
+   * them. Used from the orders/updated webhook so an order that was linked but
+   * whose file push didn't complete (e.g. an earlier transient failure, or a
+   * file that hadn't reached READY yet) self-heals without any manual step and
+   * without creating duplicate Shopify files on orders that are already fine.
+   */
+  async attachUploadsIfMissing(
+    merchant: Merchant,
+    shopifyOrderId: string,
+    uploads: Upload[],
+  ): Promise<void> {
+    if (!uploads.length) return;
+    try {
+      const accessToken = await this.shopifyTokenService.getValidAccessToken(merchant);
+      const existing = await this.getOrderFileMetafieldValue(
+        merchant.shopDomain,
+        accessToken,
+        shopifyOrderId,
+      );
+      // Value is a JSON array string, e.g. '["gid://shopify/MediaImage/1"]'.
+      // Treat null / '[]' / 'null' / '' as "no files attached yet".
+      const hasFiles = !!existing && existing !== '[]' && existing !== 'null';
+      if (hasFiles) return;
+
+      this.logger.log(
+        `Re-attaching files for order ${shopifyOrderId} on ${merchant.shopDomain} (file card was empty).`,
+      );
+      await this.attachUploadsToOrder(merchant, shopifyOrderId, uploads);
+    } catch (err: any) {
+      this.logger.error(`attachUploadsIfMissing failed: ${err?.message}`);
+    }
+  }
+
+  /** Read the order's current filedrop file metafield value (or null). */
+  private async getOrderFileMetafieldValue(
+    shopDomain: string,
+    accessToken: string,
+    shopifyOrderId: string,
+  ): Promise<string | null> {
+    const orderGid = shopifyOrderId.startsWith('gid://')
+      ? shopifyOrderId
+      : `gid://shopify/Order/${shopifyOrderId}`;
+    try {
+      const data = await this.gql(
+        shopDomain,
+        accessToken,
+        `query orderMetafield($id: ID!, $ns: String!, $key: String!) {
+          order(id: $id) { metafield(namespace: $ns, key: $key) { value } }
+        }`,
+        { id: orderGid, ns: METAFIELD_NAMESPACE, key: METAFIELD_KEY },
+      );
+      return data?.order?.metafield?.value ?? null;
+    } catch (err: any) {
+      this.logger.warn(`getOrderFileMetafieldValue failed: ${err?.message}`);
+      return null; // treat as "unknown" → caller will attempt attach
+    }
   }
 
   /** Set (or append to) the order's list.file_reference metafield. */
