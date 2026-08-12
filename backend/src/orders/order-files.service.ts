@@ -37,6 +37,17 @@ const METAFIELD_KEY = 'customer_uploads';
 export class OrderFilesService {
   private readonly logger = new Logger(OrderFilesService.name);
 
+  // Metafield *values* land on the order via metafieldsSet regardless of
+  // whether a definition exists — that part always worked, which is why the
+  // files were visible through Filedrop's own order view. But Shopify's
+  // admin UI only renders a custom metafield on the native Order page if a
+  // matching Metafield Definition exists for that namespace/key. Without
+  // one, the data is there but invisible in Shopify's own Orders screen.
+  // Track which shops we've already confirmed have the definition so we
+  // don't re-issue the mutation on every single order (it's idempotent, but
+  // there's no reason to pay the extra API call each time).
+  private readonly definitionEnsuredForShop = new Set<string>();
+
   constructor(
     private readonly storageService: StorageService,
     private readonly shopifyTokenService: ShopifyTokenService,
@@ -83,6 +94,8 @@ export class OrderFilesService {
 
     try {
       const accessToken = await this.shopifyTokenService.getValidAccessToken(merchant);
+      await this.ensureOrderMetafieldDefinition(merchant.shopDomain, accessToken);
+
       const fileGids: string[] = [];
 
       for (const upload of uploads) {
@@ -119,6 +132,73 @@ export class OrderFilesService {
       );
     } catch (err: any) {
       this.logger.error(`attachUploadsToOrder failed: ${err?.message}`);
+    }
+  }
+
+  /**
+   * Create (once per shop) the Metafield Definition that makes
+   * `filedrop.customer_uploads` render as a visible, pinned card on
+   * Shopify's native Order page. Without this definition the metafield
+   * value still gets written fine via metafieldsSet, but Shopify's admin UI
+   * has nothing telling it to display that namespace/key, so the file never
+   * shows up on the order — even though it's really there.
+   * Idempotent and best-effort: a "already exists"/TAKEN userError just
+   * means a previous run (or another server instance) already created it.
+   *
+   * Public so WebhooksService can also call it right after install/reinstall
+   * (registerWebhooksForMerchant) — that way the definition exists as soon
+   * as possible rather than only lazily on whatever order happens to be the
+   * next one with an upload.
+   */
+  async ensureOrderMetafieldDefinition(
+    shopDomain: string,
+    accessToken: string,
+  ): Promise<void> {
+    if (this.definitionEnsuredForShop.has(shopDomain)) return;
+
+    try {
+      const result = await this.gql(
+        shopDomain,
+        accessToken,
+        `mutation metafieldDefinitionCreate($definition: MetafieldDefinitionInput!) {
+          metafieldDefinitionCreate(definition: $definition) {
+            createdDefinition { id }
+            userErrors { field message code }
+          }
+        }`,
+        {
+          definition: {
+            name: 'Filedrop customer uploads',
+            namespace: METAFIELD_NAMESPACE,
+            key: METAFIELD_KEY,
+            type: 'list.file_reference',
+            ownerType: 'ORDER',
+            pin: true,
+          },
+        },
+      );
+
+      const errs = result?.metafieldDefinitionCreate?.userErrors ?? [];
+      const alreadyExists = errs.some(
+        (e: any) => e.code === 'TAKEN' || e.message?.toLowerCase().includes('already'),
+      );
+
+      if (errs.length && !alreadyExists) {
+        this.logger.warn(
+          `metafieldDefinitionCreate errors for ${shopDomain}: ${JSON.stringify(errs)}`,
+        );
+        return; // don't cache — retry on the next order
+      }
+
+      this.definitionEnsuredForShop.add(shopDomain);
+      if (!errs.length) {
+        this.logger.log(`✅ Order metafield definition created & pinned for ${shopDomain}`);
+      }
+    } catch (err: any) {
+      this.logger.error(
+        `ensureOrderMetafieldDefinition failed for ${shopDomain}: ${err?.message}`,
+      );
+      // don't cache — retry on the next order
     }
   }
 

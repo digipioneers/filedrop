@@ -44,6 +44,14 @@ export class WebhooksService {
     // Register via both REST (per-merchant) and GraphQL (app-level subscriptions)
     await this.registerViaRest(merchant, appUrl, accessToken);
     await this.registerViaGraphQL(merchant, appUrl, accessToken);
+
+    // Create the order metafield definition up front so uploaded files show
+    // on Shopify's native Order page as soon as the first order comes in,
+    // rather than waiting on OrderFilesService to lazily create it on the
+    // fly. Best-effort — attachUploadsToOrder() re-attempts this per shop
+    // anyway if it didn't land here (e.g. merchant installed before this
+    // existed).
+    await this.orderFilesService.ensureOrderMetafieldDefinition(merchant.shopDomain, accessToken);
   }
 
   private async registerViaRest(merchant: Merchant, appUrl: string, accessToken: string): Promise<void> {
