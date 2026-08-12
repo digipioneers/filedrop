@@ -1,8 +1,250 @@
+diff --git a/.env.prod.example b/.env.prod.example
+index b75b9b3..c33dba1 100644
+--- a/.env.prod.example
++++ b/.env.prod.example
+@@ -15,7 +15,7 @@ APP_DOMAIN=your-domain.com
+ # Get from: partners.shopify.com → Apps → Your App → API credentials
+ SHOPIFY_API_KEY=your_shopify_api_key
+ SHOPIFY_API_SECRET=your_shopify_api_secret
+-SHOPIFY_SCOPES=read_products,write_products,read_orders,write_orders,read_customers,write_script_tags,read_themes,write_themes
++SHOPIFY_SCOPES=read_products,write_products,read_orders,write_orders,read_customers,write_files
+ 
+ # ── Database ─────────────────────────────────────────────────
+ DB_HOST=mysql
+diff --git a/backend/.env.example b/backend/.env.example
+index d83f89f..31a2f62 100644
+--- a/backend/.env.example
++++ b/backend/.env.example
+@@ -10,7 +10,7 @@ APP_URL=https://YOUR_NGROK_URL.ngrok.io
+ # ── Shopify (from partners.shopify.com) ───────────────────────
+ SHOPIFY_API_KEY=your_shopify_api_key
+ SHOPIFY_API_SECRET=your_shopify_api_secret
+-SHOPIFY_SCOPES=read_products,write_products,read_orders,write_orders,read_customers,write_metafields,read_metafields,write_files
++SHOPIFY_SCOPES=read_products,write_products,read_orders,write_orders,read_customers,write_files
+ # Set to "true" to mark Shopify app subscription charges as test charges
+ # (no real money moves). Always leave unset/"false" in production.
+ SHOPIFY_BILLING_TEST_MODE=false
+diff --git a/backend/.env.prod.example b/backend/.env.prod.example
+index 018cefa..14aad50 100644
+--- a/backend/.env.prod.example
++++ b/backend/.env.prod.example
+@@ -11,7 +11,7 @@ APP_URL=https://yourdomain.com
+ # ── Shopify ────────────────────────────────────────────────────
+ SHOPIFY_API_KEY=CHANGE_THIS
+ SHOPIFY_API_SECRET=CHANGE_THIS
+-SHOPIFY_SCOPES=read_products,write_products,read_orders,write_orders,read_customers,write_metafields,read_metafields,write_files
++SHOPIFY_SCOPES=read_products,write_products,read_orders,write_orders,read_customers,write_files
+ 
+ # ── Database ───────────────────────────────────────────────────
+ DB_HOST=localhost
 diff --git a/backend/src/orders/order-files.service.ts b/backend/src/orders/order-files.service.ts
-index f87f5b3..7a4d47a 100644
+index f87f5b3..f18ba93 100644
 --- a/backend/src/orders/order-files.service.ts
 +++ b/backend/src/orders/order-files.service.ts
-@@ -202,7 +202,7 @@ export class OrderFilesService {
+@@ -4,6 +4,7 @@ import { Merchant } from '../auth/entities/merchant.entity';
+ import { Upload } from '../uploads/entities/upload.entity';
+ import { StorageService } from '../storage/storage.service';
+ import { ShopifyTokenService } from '../shopify-token/shopify-token.service';
++import { makeDownloadToken } from '../uploads/download-token.util';
+ 
+ /**
+  * Makes customer uploads visible INSIDE the native Shopify order page, with a
+@@ -32,6 +33,10 @@ import { ShopifyTokenService } from '../shopify-token/shopify-token.service';
+ const API_VERSION = '2026-07';
+ const METAFIELD_NAMESPACE = 'filedrop';
+ const METAFIELD_KEY = 'customer_uploads';
++// Separate URL-list metafield. Needs only write_orders (not write_files), so it
++// always works and gives the merchant a clickable link to the customised image
++// even when the native file push can't run.
++const LINKS_METAFIELD_KEY = 'customer_upload_links';
+ 
+ @Injectable()
+ export class OrderFilesService {
+@@ -47,6 +52,8 @@ export class OrderFilesService {
+   // don't re-issue the mutation on every single order (it's idempotent, but
+   // there's no reason to pay the extra API call each time).
+   private readonly definitionEnsuredForShop = new Set<string>();
++  private readonly linksDefinitionEnsuredForShop = new Set<string>();
++  private readonly grantedScopesCache = new Map<string, string[]>();
+ 
+   constructor(
+     private readonly storageService: StorageService,
+@@ -94,6 +101,39 @@ export class OrderFilesService {
+ 
+     try {
+       const accessToken = await this.shopifyTokenService.getValidAccessToken(merchant);
++
++      // (A) Always attach clickable links first. This uses an order metafield
++      // of type list.url, which needs only write_orders — a scope we clearly
++      // have, since order notes already work. So even if the native file push
++      // below can't run (e.g. the token lacks write_files), the merchant still
++      // gets a link on the order that opens the customised image.
++      await this.ensureOrderLinksDefinition(merchant.shopDomain, accessToken);
++      await this.setOrderLinksMetafield(
++        merchant.shopDomain,
++        accessToken,
++        shopifyOrderId,
++        uploads,
++      ).catch((e: any) =>
++        this.logger.error(`Failed to set order links metafield: ${e?.message}`),
++      );
++
++      // (B) Native file thumbnails require the write_files scope. Check it up
++      // front so a missing scope becomes ONE clear, actionable log line instead
++      // of a silent per-file failure that leaves the card mysteriously empty.
++      const scopes = await this.getGrantedScopes(merchant.shopDomain, accessToken);
++      const scopesKnown = scopes.length > 0;
++      if (scopesKnown && !scopes.includes('write_files')) {
++        this.logger.error(
++          `❌ Order ${shopifyOrderId} on ${merchant.shopDomain}: the app's access token is ` +
++            `MISSING the "write_files" scope, so the customised image can't be pushed to ` +
++            `Shopify Files and the native file card will stay empty. A clickable link was ` +
++            `still attached. FIX: ensure SHOPIFY_SCOPES includes write_files, then have the ` +
++            `merchant reinstall / re-authorize the app so the token is re-granted. ` +
++            `Currently granted: ${scopes.join(', ')}`,
++        );
++        return;
++      }
++
+       await this.ensureOrderMetafieldDefinition(merchant.shopDomain, accessToken);
+ 
+       const fileGids: string[] = [];
+@@ -115,7 +155,8 @@ export class OrderFilesService {
+ 
+       if (!fileGids.length) {
+         this.logger.warn(
+-          `No files were pushed to Shopify for order ${shopifyOrderId}; skipping metafield.`,
++          `No files were pushed to Shopify for order ${shopifyOrderId}; native file card ` +
++            `left empty (clickable links were still attached).`,
+         );
+         return;
+       }
+@@ -135,6 +176,124 @@ export class OrderFilesService {
+     }
+   }
+ 
++  /**
++   * Return the scopes actually granted to our token for this shop, via
++   * GET /admin/oauth/access_scopes.json. Cached per shop. Returns [] on error,
++   * which the caller treats as "unknown" (it will still attempt the file push
++   * rather than skip it on a failed diagnostic call).
++   */
++  private async getGrantedScopes(
++    shopDomain: string,
++    accessToken: string,
++  ): Promise<string[]> {
++    const cached = this.grantedScopesCache.get(shopDomain);
++    if (cached) return cached;
++    try {
++      const res = await axios.get(
++        `https://${shopDomain}/admin/oauth/access_scopes.json`,
++        { headers: { 'X-Shopify-Access-Token': accessToken }, timeout: 10_000 },
++      );
++      const scopes: string[] = (res.data?.access_scopes || [])
++        .map((s: any) => s?.handle)
++        .filter(Boolean);
++      if (scopes.length) this.grantedScopesCache.set(shopDomain, scopes);
++      return scopes;
++    } catch (err: any) {
++      this.logger.warn(`getGrantedScopes failed for ${shopDomain}: ${err?.message}`);
++      return [];
++    }
++  }
++
++  /** Build the public, token-authed URL that opens/downloads an upload. */
++  private buildPreviewUrl(upload: Upload): string {
++    const base = (process.env.APP_URL || process.env.BACKEND_URL || '').replace(/\/$/, '');
++    const token = makeDownloadToken(upload.id);
++    return `${base}/api/v1/storefront/file/${upload.id}?token=${token}`;
++  }
++
++  /** Create (once per shop) the pinned list.url definition for upload links. */
++  private async ensureOrderLinksDefinition(
++    shopDomain: string,
++    accessToken: string,
++  ): Promise<void> {
++    if (this.linksDefinitionEnsuredForShop.has(shopDomain)) return;
++    try {
++      const result = await this.gql(
++        shopDomain,
++        accessToken,
++        `mutation metafieldDefinitionCreate($definition: MetafieldDefinitionInput!) {
++          metafieldDefinitionCreate(definition: $definition) {
++            createdDefinition { id }
++            userErrors { field message code }
++          }
++        }`,
++        {
++          definition: {
++            name: 'Filedrop customer upload links',
++            namespace: METAFIELD_NAMESPACE,
++            key: LINKS_METAFIELD_KEY,
++            type: 'list.url',
++            ownerType: 'ORDER',
++            pin: true,
++          },
++        },
++      );
++      const errs = result?.metafieldDefinitionCreate?.userErrors ?? [];
++      const alreadyExists = errs.some(
++        (e: any) => e.code === 'TAKEN' || e.message?.toLowerCase().includes('already'),
++      );
++      if (errs.length && !alreadyExists) {
++        this.logger.warn(
++          `links metafieldDefinitionCreate errors for ${shopDomain}: ${JSON.stringify(errs)}`,
++        );
++        return;
++      }
++      this.linksDefinitionEnsuredForShop.add(shopDomain);
++    } catch (err: any) {
++      this.logger.error(`ensureOrderLinksDefinition failed for ${shopDomain}: ${err?.message}`);
++    }
++  }
++
++  /** Set the order's list.url metafield to the uploads' preview links. */
++  private async setOrderLinksMetafield(
++    shopDomain: string,
++    accessToken: string,
++    shopifyOrderId: string,
++    uploads: Upload[],
++  ): Promise<void> {
++    const urls = uploads.map((u) => this.buildPreviewUrl(u)).filter(Boolean);
++    if (!urls.length) return;
++    const orderGid = shopifyOrderId.startsWith('gid://')
++      ? shopifyOrderId
++      : `gid://shopify/Order/${shopifyOrderId}`;
++
++    const result = await this.gql(
++      shopDomain,
++      accessToken,
++      `mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
++        metafieldsSet(metafields: $metafields) {
++          metafields { id key namespace }
++          userErrors { field message }
++        }
++      }`,
++      {
++        metafields: [
++          {
++            ownerId: orderGid,
++            namespace: METAFIELD_NAMESPACE,
++            key: LINKS_METAFIELD_KEY,
++            type: 'list.url',
++            value: JSON.stringify(urls),
++          },
++        ],
++      },
++    );
++    const errs = result?.metafieldsSet?.userErrors ?? [];
++    if (errs.length) {
++      throw new Error(`links metafieldsSet errors: ${JSON.stringify(errs)}`);
++    }
++  }
++
+   /**
+    * Create (once per shop) the Metafield Definition that makes
+    * `filedrop.customer_uploads` render as a visible, pinned card on
+@@ -202,7 +361,7 @@ export class OrderFilesService {
      }
    }
  
@@ -11,7 +253,7 @@ index f87f5b3..7a4d47a 100644
    private async pushOneFileToShopify(
      shopDomain: string,
      accessToken: string,
-@@ -211,6 +211,7 @@ export class OrderFilesService {
+@@ -211,6 +370,7 @@ export class OrderFilesService {
      const buffer = await this.storageService.getFileBuffer(upload.s3Key);
      const filename = upload.originalFileName || upload.sanitizedFileName || 'upload';
      const mime = upload.mimeType || 'application/octet-stream';
@@ -19,7 +261,7 @@ index f87f5b3..7a4d47a 100644
  
      // 1) staged target
      const staged = await this.gql(
-@@ -234,6 +235,10 @@ export class OrderFilesService {
+@@ -234,6 +394,10 @@ export class OrderFilesService {
        },
      );
  
@@ -30,7 +272,7 @@ index f87f5b3..7a4d47a 100644
      const target = staged?.stagedUploadsCreate?.stagedTargets?.[0];
      if (!target?.url) {
        throw new Error('stagedUploadsCreate returned no target');
-@@ -268,7 +273,7 @@ export class OrderFilesService {
+@@ -268,7 +432,7 @@ export class OrderFilesService {
          files: [
            {
              alt: `Customer upload: ${filename}`,
@@ -39,7 +281,7 @@ index f87f5b3..7a4d47a 100644
              originalSource: target.resourceUrl,
            },
          ],
-@@ -279,7 +284,122 @@ export class OrderFilesService {
+@@ -279,7 +443,122 @@ export class OrderFilesService {
      if (errs.length) {
        throw new Error(`fileCreate errors: ${JSON.stringify(errs)}`);
      }
@@ -540,3 +782,16 @@ index acffe5e..b1f68bb 100644
    }
  
    // ── Init ──────────────────────────────────────────────────────────────────
+diff --git a/scripts/setup.js b/scripts/setup.js
+index 86f3dce..ba4f4ff 100644
+--- a/scripts/setup.js
++++ b/scripts/setup.js
+@@ -123,7 +123,7 @@ APP_DOMAIN=${domain}
+ 
+ SHOPIFY_API_KEY=${shopifyKey}
+ SHOPIFY_API_SECRET=${shopifySecret}
+-SHOPIFY_SCOPES=read_products,write_products,read_orders,write_orders,read_customers,write_script_tags,read_themes,write_themes
++SHOPIFY_SCOPES=read_products,write_products,read_orders,write_orders,read_customers,write_files
+ 
+ DB_HOST=mysql
+ DB_PORT=3306
