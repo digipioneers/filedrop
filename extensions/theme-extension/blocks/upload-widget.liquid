@@ -1244,6 +1244,23 @@
       input.value = url;
       form.appendChild(input);
     });
+
+    // Also attach the raw upload ids as ONE hidden line-item property. The
+    // leading underscore keeps it out of the storefront/checkout/email
+    // display, but it still travels on the order — giving the orders/create
+    // webhook a dedicated, reliable id channel that does NOT depend on
+    // cart_token (which Shopify sends as null for PayPal / Shop Pay / express
+    // checkouts) NOR on parsing a preview URL. This is what makes the
+    // customised image reliably appear in both Filedrop's Orders view and the
+    // native Shopify order page. See WebhooksService.resolveUploadsForOrder().
+    if (allUploadedIds.length) {
+      const idInput = document.createElement('input');
+      idInput.type = 'hidden';
+      idInput.setAttribute('data-cfup-prop', '1');
+      idInput.name = 'properties[_Filedrop Upload IDs]';
+      idInput.value = allUploadedIds.join(',');
+      form.appendChild(idInput);
+    }
   }
 
   // ── Init ──────────────────────────────────────────────────────────────────

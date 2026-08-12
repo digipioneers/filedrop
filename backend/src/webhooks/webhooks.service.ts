@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In, IsNull } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { Upload } from '../uploads/entities/upload.entity';
@@ -314,33 +314,38 @@ export class WebhooksService {
       return;
     }
 
-    const cartToken = order.cart_token;
     const shopifyOrderId = String(order.id);
     const orderId = String(order.order_number ?? order.id);
 
-    if (!cartToken) {
-      this.logger.warn(
-        `orders/create webhook for #${orderId} (${shopDomain}) had no cart_token — cannot check for uploads to link.`,
-      );
-      return;
-    }
-
-    const uploads = await this.uploadRepo.find({
-      where: { merchantId: merchant.id, cartToken },
-    });
+    // Resolve which of this merchant's uploads belong to this order.
+    //
+    // This USED to match ONLY on order.cart_token, and that is exactly what
+    // was breaking customised images. Shopify sends cart_token = null for a
+    // large share of real orders — anything paid through an offsite/express
+    // gateway (PayPal, Shop Pay, Apple/Google Pay) and many "Buy it now"
+    // flows. When cart_token was null (or a provisional token that never
+    // matched), the upload never received an orderId, so it disappeared from
+    // Filedrop's Orders view AND never got pushed onto the native Shopify
+    // order page.
+    //
+    // We now resolve uploads from the identifiers the theme widget already
+    // attaches to every order (cart attribute `_cfup_upload_ids` → order
+    // note_attributes, and the preview URL in each line item's properties),
+    // and only fall back to cart_token last. See resolveUploadsForOrder().
+    const { uploads, lineItemIdByUpload } = await this.resolveUploadsForOrder(
+      merchant.id,
+      order,
+    );
 
     if (!uploads.length) {
-      // Not necessarily a bug — most orders have no upload at all. But if this
-      // fires for an order you KNOW had a file uploaded first, the cartToken
-      // captured at upload time didn't match order.cart_token, which is
-      // exactly the failure mode the /cart.js fix in the theme widget
-      // addresses (see upload-widget.liquid getCartToken()).
-      //
-      // Uses .log() not .debug(): main.ts only enables ['error','warn','log']
-      // levels, so .debug() here would be silently swallowed and this branch
-      // would be invisible in production logs even when it fires.
+      // Most orders legitimately have no upload. If this fires for an order
+      // you KNOW had a customised file, inspect the logged identifiers below —
+      // it means none of note_attributes / line-item properties / cart_token
+      // pointed at a still-unlinked upload for this merchant.
       this.logger.log(
-        `ℹ️  No uploads found matching cartToken for order #${orderId} (${shopDomain}). cartToken from webhook: ${cartToken}`,
+        `ℹ️  No Filedrop uploads resolved for order #${orderId} (${shopDomain}). ` +
+          `cart_token=${order.cart_token ?? 'null'}; ` +
+          `note_attributes=${JSON.stringify(order.note_attributes ?? [])}`,
       );
       return;
     }
@@ -355,8 +360,17 @@ export class WebhooksService {
       },
     );
 
+    // Best-effort: record which specific line item each upload belongs to, so
+    // the customised image can later be shown against the correct product line.
+    for (const u of uploads) {
+      const lineItemId = lineItemIdByUpload.get(u.id);
+      if (lineItemId) {
+        await this.uploadRepo.update(u.id, { lineItemId: String(lineItemId) });
+      }
+    }
+
     this.logger.log(
-      `Associated ${uploads.length} uploads with order #${orderId} (${shopDomain})`,
+      `Associated ${uploads.length} upload(s) with order #${orderId} (${shopDomain})`,
     );
 
     // Add Shopify order timeline entry
@@ -376,6 +390,122 @@ export class WebhooksService {
       orderNumber: orderId,
       customerEmail: order.email,
     });
+  }
+
+  /**
+   * Work out which of a merchant's uploads belong to a just-created order,
+   * using the most reliable signals first and cart_token only as a fallback.
+   *
+   * Strategy order:
+   *   1. Cart attribute `_cfup_upload_ids` — the widget writes this on every
+   *      upload (persistUploadIds() in upload-widget.liquid). Cart attributes
+   *      surface on the order as `note_attributes`, and unlike cart_token they
+   *      survive offsite/express checkouts. Durable path.
+   *   2. Line-item properties — the widget also writes the file's preview URL
+   *      as `properties[Uploaded file]` on the product line. The upload id is
+   *      embedded in that URL (/storefront/file/{id}). Parsing it resolves the
+   *      upload AND tells us which line item it belongs to.
+   *   3. cart_token — the original behaviour, kept as a last resort for the
+   *      orders that actually do carry a matching token.
+   *
+   * Every candidate id is re-checked against the DB scoped to this merchant and
+   * to uploads not yet linked to an order, so a stale/forged value in
+   * note_attributes can never attach someone else's file to this order.
+   */
+  private async resolveUploadsForOrder(
+    merchantId: string,
+    order: any,
+  ): Promise<{ uploads: Upload[]; lineItemIdByUpload: Map<string, string> }> {
+    const lineItemIdByUpload = new Map<string, string>();
+    const candidateIds = new Set<string>();
+
+    // (1) note_attributes (from the `_cfup_upload_ids` cart attribute)
+    for (const id of this.extractUploadIdsFromNoteAttributes(order)) {
+      candidateIds.add(id);
+    }
+
+    // (2) line-item properties (preview URL contains the upload id)
+    for (const { uploadId, lineItemId } of this.extractUploadRefsFromLineItems(order)) {
+      candidateIds.add(uploadId);
+      if (lineItemId) lineItemIdByUpload.set(uploadId, lineItemId);
+    }
+
+    let uploads: Upload[] = [];
+
+    if (candidateIds.size) {
+      uploads = await this.uploadRepo.find({
+        where: {
+          id: In([...candidateIds]),
+          merchantId,
+          orderId: IsNull(),
+          deletedAt: IsNull(),
+        },
+      });
+    }
+
+    // (3) Fallback: cart_token, only if the reliable paths found nothing.
+    if (!uploads.length && order.cart_token) {
+      uploads = await this.uploadRepo.find({
+        where: {
+          merchantId,
+          cartToken: String(order.cart_token).split('?')[0],
+          orderId: IsNull(),
+          deletedAt: IsNull(),
+        },
+      });
+    }
+
+    return { uploads, lineItemIdByUpload };
+  }
+
+  /** Pull upload ids out of the `_cfup_upload_ids` order note attribute. */
+  private extractUploadIdsFromNoteAttributes(order: any): string[] {
+    const attrs: Array<{ name?: string; value?: string }> = Array.isArray(
+      order?.note_attributes,
+    )
+      ? order.note_attributes
+      : [];
+    const entry = attrs.find((a) => a?.name === '_cfup_upload_ids');
+    if (!entry?.value) return [];
+    return String(entry.value)
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  /**
+   * Pull { uploadId, lineItemId } pairs out of the order's line-item
+   * properties. The widget stores the file's preview URL, which contains the
+   * upload id as /storefront/file/{uuid}. Also tolerates a bare uuid value.
+   */
+  private extractUploadRefsFromLineItems(
+    order: any,
+  ): Array<{ uploadId: string; lineItemId?: string }> {
+    const refs: Array<{ uploadId: string; lineItemId?: string }> = [];
+    const uuidRe =
+      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+    const lineItems: any[] = Array.isArray(order?.line_items)
+      ? order.line_items
+      : [];
+
+    const uuidReGlobal = new RegExp(uuidRe.source, 'gi');
+
+    for (const li of lineItems) {
+      const props: any[] = Array.isArray(li?.properties) ? li.properties : [];
+      const lineItemId = li?.id ? String(li.id) : undefined;
+      for (const p of props) {
+        const value = typeof p?.value === 'string' ? p.value : '';
+        if (!value) continue;
+        // A single value may carry one upload id (preview URL) or several
+        // (a combined "_Filedrop Upload IDs" property), so collect them all.
+        const matches = value.match(uuidReGlobal);
+        if (!matches) continue;
+        for (const m of matches) {
+          refs.push({ uploadId: m.toLowerCase(), lineItemId });
+        }
+      }
+    }
+    return refs;
   }
 
   async handleOrderUpdate(shopDomain: string, order: any): Promise<void> {
