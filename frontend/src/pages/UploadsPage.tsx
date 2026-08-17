@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import {
   Page, Card, ResourceList, ResourceItem, Text,
   Badge, Filters, Select, EmptyState, Pagination,
-  Modal, InlineStack, BlockStack, Box, Thumbnail, Avatar,
+  Modal, InlineStack, BlockStack, Box, Thumbnail, Avatar, Banner,
 } from '@shopify/polaris';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../utils/api';
@@ -37,6 +37,40 @@ export default function UploadsPage() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [deleteId, setDeleteId] = useState<string|null>(null);
+  const [downloadError, setDownloadError] = useState<string|null>(null);
+  const [downloadingId, setDownloadingId] = useState<string|null>(null);
+
+  // Fetch a fresh signed URL for the file, then trigger a browser download.
+  // The signed URL is served with Content-Disposition: attachment (set by the
+  // backend via buildDownloadFilename), so navigating to it downloads the file
+  // rather than opening it in place. We open it via a temporary anchor so this
+  // works from inside Shopify's embedded admin iframe.
+  const handleDownload = async (upload: any) => {
+    setDownloadError(null);
+    if (upload.status === 'infected') {
+      setDownloadError(`"${upload.originalFileName}" was flagged as infected and can't be downloaded.`);
+      return;
+    }
+    setDownloadingId(upload.id);
+    try {
+      const url = await api.get(`/uploads/${upload.id}/url`).then((r: any) => r.data.data);
+      if (!url) throw new Error('No download URL was returned.');
+      const a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.download = upload.originalFileName || 'download';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (e: any) {
+      setDownloadError(
+        e?.response?.data?.message || e?.message || 'Download failed. Please try again.',
+      );
+    } finally {
+      setDownloadingId(null);
+    }
+  };
 
   const { data, isLoading } = useQuery({
     queryKey: ['uploads', page, search, status],
@@ -61,6 +95,13 @@ export default function UploadsPage() {
 
   return (
     <Page title="All Uploads" subtitle={`${total} files`}>
+      {downloadError && (
+        <Box paddingBlockEnd="300">
+          <Banner tone="critical" onDismiss={() => setDownloadError(null)}>
+            <p>{downloadError}</p>
+          </Banner>
+        </Box>
+      )}
       <Card>
         <ResourceList
           resourceName={RESOURCE_NAME}
@@ -88,8 +129,15 @@ export default function UploadsPage() {
           renderItem={(upload: any) => {
             const badge = STATUS_MAP[upload.status] || STATUS_MAP.pending;
             return (
-              <ResourceItem id={upload.id} onClick={() => {}}
-                shortcutActions={[{ content: 'Delete', onAction: () => setDeleteId(upload.id) }]}
+              <ResourceItem id={upload.id} onClick={() => handleDownload(upload)}
+                shortcutActions={[
+                  {
+                    content: downloadingId === upload.id ? 'Downloading…' : 'Download',
+                    onAction: () => handleDownload(upload),
+                    disabled: upload.status === 'infected' || downloadingId === upload.id,
+                  },
+                  { content: 'Delete', onAction: () => setDeleteId(upload.id) },
+                ]}
               >
                 <InlineStack gap="400" align="space-between" blockAlign="center">
                   <BlockStack gap="100">

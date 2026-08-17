@@ -160,7 +160,7 @@ export function DashboardPage() {
                     title="Build your upload fields"
                     description="Create the fields customers will use to upload files — set file types, sizes, and which products they appear on."
                     actionLabel={hasFields ? 'Manage fields' : 'Create a field'}
-                    onAction={() => navigate('/fields')}
+                    onAction={() => navigate('/app/fields')}
                   />
                   <ChecklistStep
                     done={hasUploads}
@@ -185,32 +185,32 @@ export function DashboardPage() {
                 <Text variant="headingMd" as="h2">Customize Filedrop</Text>
                 <Grid>
                   <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 2, lg: 4, xl: 4 }}>
-                    <Link onClick={() => navigate('/fields')} removeUnderline>
+                    <Link onClick={() => navigate('/app/fields')} removeUnderline>
                       Add or edit upload fields
                     </Link>
                   </Grid.Cell>
                   <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 2, lg: 4, xl: 4 }}>
-                    <Link onClick={() => navigate('/settings')} removeUnderline>
+                    <Link onClick={() => navigate('/app/settings')} removeUnderline>
                       Style the upload widget
                     </Link>
                   </Grid.Cell>
                   <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 2, lg: 4, xl: 4 }}>
-                    <Link onClick={() => navigate('/settings')} removeUnderline>
+                    <Link onClick={() => navigate('/app/settings')} removeUnderline>
                       Set download link expiry
                     </Link>
                   </Grid.Cell>
                   <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 2, lg: 4, xl: 4 }}>
-                    <Link onClick={() => navigate('/uploads')} removeUnderline>
+                    <Link onClick={() => navigate('/app/uploads')} removeUnderline>
                       View all uploaded files
                     </Link>
                   </Grid.Cell>
                   <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 2, lg: 4, xl: 4 }}>
-                    <Link onClick={() => navigate('/settings')} removeUnderline>
+                    <Link onClick={() => navigate('/app/settings')} removeUnderline>
                       Configure file types &amp; size limits
                     </Link>
                   </Grid.Cell>
                   <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 2, lg: 4, xl: 4 }}>
-                    <Link onClick={() => navigate('/billing')} removeUnderline>
+                    <Link onClick={() => navigate('/app/billing')} removeUnderline>
                       Manage your plan
                     </Link>
                   </Grid.Cell>
