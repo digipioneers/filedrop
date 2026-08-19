@@ -117,6 +117,19 @@
 
   .cfup-field-label .cfup-required { color: #cc0000; margin-left: 2px; }
 
+  .cfup-required-msg {
+    color: #cc0000;
+    font-size: 14px;
+    line-height: 1.4;
+    margin: 10px 0 0;
+    font-weight: 500;
+  }
+  .cfup-disabled {
+    opacity: 0.5 !important;
+    cursor: not-allowed !important;
+    pointer-events: none !important;
+  }
+
   .cfup-field-description {
     font-size: 13px;
     color: #666;
@@ -304,6 +317,9 @@
   widget.style.setProperty('--cfup-btn-color', BTN_COLOR);
 
   let allUploadedIds = [];
+  // Per-required-field upload counters, rebuilt whenever fields (re)load. Used
+  // to gate Add-to-Cart until every required field has at least one upload.
+  const requiredFieldGetters = [];
   // Preview URLs for each uploaded file, written as Shopify line-item
   // properties so the image shows directly under the product on the order.
   let allUploadedPreviews = [];
@@ -391,8 +407,37 @@
     document.addEventListener('submit', (e) => {
       const form = e.target;
       if (form && form.action && looksLikeCartAdd(form.action)) {
+        // Hard stop: don't let the product be added if a required upload is
+        // missing. Capture phase + stopImmediatePropagation so this wins even
+        // against the theme's own submit handlers.
+        if (requiredFieldGetters.length > 0 && !allRequiredSatisfied()) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          showGateMessage(true);
+          updateAddToCartGate();
+          return;
+        }
         rebindUploadsToRealCartToken();
       }
+    }, true);
+
+    // Safety net for themes whose Add-to-Cart / express buttons don't submit a
+    // <form> (AJAX carts, custom buttons, Shop Pay). Intercept the click in the
+    // capture phase before the theme's handler runs.
+    document.addEventListener('click', (e) => {
+      if (requiredFieldGetters.length === 0 || allRequiredSatisfied()) return;
+      const target = e.target.closest && e.target.closest(
+        'button[type="submit"], input[type="submit"], [name="add"], .product-form__submit, .add-to-cart, [data-add-to-cart], .shopify-payment-button, .shopify-payment-button button',
+      );
+      if (!target) return;
+      // Only intercept within a real cart/add context.
+      const inCartForm = target.closest('form[action*="/cart/add"]') || document.querySelector('form[action*="/cart/add"]');
+      const isExpress = target.closest('.shopify-payment-button');
+      if (!inCartForm && !isExpress) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      showGateMessage(true);
+      updateAddToCartGate();
     }, true);
   }
   watchForAddToCart();
@@ -710,7 +755,88 @@
     });
   }
 
+  // ── Required-upload gating ────────────────────────────────────────────────
+  // A field marked "required" must have at least one successful upload before
+  // the product can be added to cart. Previously only the express-checkout
+  // buttons were hidden, so a shopper could still use the normal Add-to-Cart
+  // and check out with no file — leaving the merchant an order with no artwork.
+  function allRequiredSatisfied() {
+    return requiredFieldGetters.every((f) => f.getCount() > 0);
+  }
+
+  function getCartForms() {
+    const forms = new Set();
+    const near = widget.closest('form[action*="/cart/add"]');
+    if (near) forms.add(near);
+    document.querySelectorAll('form[action*="/cart/add"]').forEach((f) => forms.add(f));
+    return Array.from(forms);
+  }
+
+  function getAddToCartButtons() {
+    const btns = new Set();
+    getCartForms().forEach((form) => {
+      form
+        .querySelectorAll(
+          'button[type="submit"], input[type="submit"], [name="add"], .product-form__submit, .add-to-cart, [data-add-to-cart]',
+        )
+        .forEach((b) => btns.add(b));
+    });
+    return Array.from(btns);
+  }
+
+  function showGateMessage(show) {
+    let msg = document.getElementById('cfup-required-msg');
+    if (show) {
+      if (!msg) {
+        msg = document.createElement('div');
+        msg.id = 'cfup-required-msg';
+        msg.className = 'cfup-required-msg';
+        msg.setAttribute('role', 'alert');
+        msg.textContent = 'Please upload the required file(s) before adding to cart.';
+        (container.parentNode || container).insertBefore(msg, container.nextSibling);
+      }
+      msg.style.display = '';
+    } else if (msg) {
+      msg.style.display = 'none';
+    }
+  }
+
+  // Re-evaluate the gate. Called after every upload/removal and on (re)load.
+  function updateAddToCartGate() {
+    const hasRequired = requiredFieldGetters.length > 0;
+    const satisfied = allRequiredSatisfied();
+    const block = hasRequired && !satisfied;
+
+    // Express checkout stays hidden until required uploads are present.
+    setExpressCheckoutVisible(!block);
+
+    getAddToCartButtons().forEach((btn) => {
+      if (block) {
+        if (!btn.dataset.cfupGated) {
+          btn.dataset.cfupGated = '1';
+          // Remember whether the theme had already disabled it, so we only
+          // re-enable buttons that WE disabled.
+          btn.dataset.cfupWasDisabled = btn.disabled ? '1' : '0';
+        }
+        btn.disabled = true;
+        btn.classList.add('cfup-disabled');
+        btn.setAttribute('aria-disabled', 'true');
+      } else if (btn.dataset.cfupGated) {
+        if (btn.dataset.cfupWasDisabled !== '1') btn.disabled = false;
+        btn.classList.remove('cfup-disabled');
+        btn.removeAttribute('aria-disabled');
+        delete btn.dataset.cfupGated;
+        delete btn.dataset.cfupWasDisabled;
+      }
+    });
+
+    if (!block) showGateMessage(false);
+  }
+
   async function loadFields() {
+    // Rebuild the required-field registry from scratch on every (re)load,
+    // including variant changes.
+    requiredFieldGetters.length = 0;
     const variantId = widget.dataset.variantId;
     try {
       const url = new URL(`${API_URL}/storefront/fields`);
@@ -723,10 +849,12 @@
       const json = await res.json();
       const fields = json.data || [];
       fields.forEach((field) => container.appendChild(buildField(field)));
-      setExpressCheckoutVisible(!fields.some((f) => f.required));
     } catch (e) {
       console.error('[CFUP] Failed to load upload fields:', e);
     }
+    // Apply the gate whether or not fields loaded (fail-open: if we couldn't
+    // load fields, there are no known required fields, so don't block).
+    updateAddToCartGate();
   }
 
   // Rebuild on variant change
@@ -748,6 +876,12 @@
   function buildField(field) {
     const uploadedFiles = [];
     const uploadedFileIds = [];
+
+    // Register required fields so the Add-to-Cart gate can check whether each
+    // one has at least one upload. The getter reads the live array length.
+    if (field.required) {
+      requiredFieldGetters.push({ id: field.id, getCount: () => uploadedFileIds.length });
+    }
 
     const wrapper = document.createElement('div');
     wrapper.className = 'cfup-field-wrapper';
@@ -1223,6 +1357,9 @@
    * guaranteed — no dependency on cart-token matching.
    */
   function syncLineItemProperties() {
+    // Every upload/removal flows through here — re-check the required gate.
+    updateAddToCartGate();
+
     // Find the product form this widget belongs to.
     const form =
       widget.closest('form[action*="/cart/add"]') ||
