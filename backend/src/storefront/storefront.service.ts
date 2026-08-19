@@ -227,11 +227,18 @@ export class StorefrontService {
     let imageHeight: number = null;
     if (file.mimetype.startsWith('image/')) {
       const dims = getImageDimensions(file.buffer);
-      if (dims) { imageWidth = dims.width; imageHeight = dims.height; }
-      if (field.minWidth && imageWidth < field.minWidth) throw new BadRequestException(`Min width: ${field.minWidth}px`);
-      if (field.maxWidth && imageWidth > field.maxWidth) throw new BadRequestException(`Max width: ${field.maxWidth}px`);
-      if (field.minHeight && imageHeight < field.minHeight) throw new BadRequestException(`Min height: ${field.minHeight}px`);
-      if (field.maxHeight && imageHeight > field.maxHeight) throw new BadRequestException(`Max height: ${field.maxHeight}px`);
+      // Only enforce dimension rules when the dimensions were actually parsed.
+      // Otherwise imageWidth/imageHeight stay null, and `null < field.minWidth`
+      // coerces to `0 < minWidth` === true, wrongly rejecting a valid file with
+      // a misleading "Min width" error.
+      if (dims) {
+        imageWidth = dims.width;
+        imageHeight = dims.height;
+        if (field.minWidth && imageWidth < field.minWidth) throw new BadRequestException(`Min width: ${field.minWidth}px`);
+        if (field.maxWidth && imageWidth > field.maxWidth) throw new BadRequestException(`Max width: ${field.maxWidth}px`);
+        if (field.minHeight && imageHeight < field.minHeight) throw new BadRequestException(`Min height: ${field.minHeight}px`);
+        if (field.maxHeight && imageHeight > field.maxHeight) throw new BadRequestException(`Max height: ${field.maxHeight}px`);
+      }
     }
 
     const sanitized = this.securityService.sanitizeFileName(file.originalname);
@@ -376,7 +383,15 @@ export class StorefrontService {
   }
 
   private async checkPlanLimits(merchant: Merchant) {
-    const sub = await this.subRepo.findOne({ where: { merchantId: merchant.id, status: SubscriptionStatus.ACTIVE } });
+    // Match ACTIVE *and* TRIAL subscriptions — a merchant on a trial should get
+    // their trial plan's limits, not silently fall back to the Free plan.
+    const sub = await this.subRepo.findOne({
+      where: [
+        { merchantId: merchant.id, status: SubscriptionStatus.ACTIVE },
+        { merchantId: merchant.id, status: SubscriptionStatus.TRIAL },
+      ],
+      order: { createdAt: 'DESC' },
+    });
     const plan = sub
       ? await this.planRepo.findOne({ where: { id: sub.planId } })
       : await this.planRepo.findOne({ where: { name: PlanName.FREE } });
@@ -392,7 +407,7 @@ export class StorefrontService {
       );
       throw new ForbiddenException('This store is not accepting new uploads right now. Please try again later.');
     }
-    if (Number(merchant.storageUsedBytes) >= Number(plan.storageBytes)) {
+    if (Number(plan.storageBytes) !== -1 && Number(merchant.storageUsedBytes) >= Number(plan.storageBytes)) {
       this.logger.warn(`Upload blocked for merchant ${merchant.id}: storage limit reached (plan: ${plan.displayName})`);
       throw new ForbiddenException('This store is not accepting new uploads right now. Please try again later.');
     }

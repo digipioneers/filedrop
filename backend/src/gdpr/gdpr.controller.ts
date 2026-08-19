@@ -9,8 +9,12 @@ import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { Merchant } from '../auth/entities/merchant.entity';
 import { Upload } from '../uploads/entities/upload.entity';
+import { UploadField } from '../uploads/entities/upload-field.entity';
 import { MerchantSettings } from '../settings/entities/merchant-settings.entity';
 import { Subscription } from '../billing/entities/subscription.entity';
+import { Product } from '../products/entities/product.entity';
+import { Notification } from '../notifications/entities/notification.entity';
+import { StorageService } from '../storage/storage.service';
 
 @ApiTags('GDPR')
 @Controller('gdpr')
@@ -22,12 +26,36 @@ export class GdprController {
     private readonly merchantRepo: Repository<Merchant>,
     @InjectRepository(Upload)
     private readonly uploadRepo: Repository<Upload>,
+    @InjectRepository(UploadField)
+    private readonly fieldRepo: Repository<UploadField>,
     @InjectRepository(MerchantSettings)
     private readonly settingsRepo: Repository<MerchantSettings>,
     @InjectRepository(Subscription)
     private readonly subRepo: Repository<Subscription>,
+    @InjectRepository(Product)
+    private readonly productRepo: Repository<Product>,
+    @InjectRepository(Notification)
+    private readonly notificationRepo: Repository<Notification>,
+    private readonly storageService: StorageService,
     private readonly configService: ConfigService,
   ) {}
+
+  /** Delete a batch of uploads' underlying files from object storage. Returns
+   *  the total number of bytes freed (best-effort; a missing object is fine). */
+  private async deleteUploadFiles(uploads: Upload[]): Promise<number> {
+    let freedBytes = 0;
+    for (const u of uploads) {
+      if (u.s3Key) {
+        await this.storageService
+          .deleteFile(u.s3Key)
+          .catch((e: any) =>
+            this.logger.warn(`GDPR: could not delete file ${u.s3Key}: ${e?.message}`),
+          );
+      }
+      freedBytes += Number(u.fileSizeBytes || 0);
+    }
+    return freedBytes;
+  }
 
   /**
    * Verify Shopify webhook HMAC.
@@ -141,9 +169,34 @@ export class GdprController {
 
   private async handleCustomerDataRequest(shopDomain: string, body: any) {
     const customer = body?.customer;
-    this.logger.log(`data_request — shop: ${shopDomain}, customer: ${customer?.email || customer?.id}`);
-    // TODO: email merchant with customer's upload records
-    return { acknowledged: true };
+    this.logger.log(
+      `data_request — shop: ${shopDomain}, customer: ${customer?.email || customer?.id}`,
+    );
+
+    // Compile the data we hold for this customer so the merchant can fulfil the
+    // request. We store upload files + metadata keyed by customer email; gather
+    // a non-sensitive summary and log it for the merchant/support to action.
+    // (Shopify doesn't read this response body — the obligation is on the app
+    // to make the data available, which starts with compiling it here.)
+    const merchant = await this.merchantRepo.findOne({ where: { shopDomain } });
+    let records: Array<Record<string, any>> = [];
+    if (merchant && customer?.email) {
+      const uploads = await this.uploadRepo.find({
+        where: { merchantId: merchant.id, customerEmail: customer.email },
+      });
+      records = uploads.map((u) => ({
+        id: u.id,
+        fileName: u.originalFileName,
+        sizeBytes: Number(u.fileSizeBytes || 0),
+        mimeType: u.mimeType,
+        orderId: u.shopifyOrderId,
+        createdAt: u.createdAt,
+      }));
+    }
+    this.logger.log(
+      `data_request compiled ${records.length} record(s) for ${customer?.email} on ${shopDomain}: ${JSON.stringify(records)}`,
+    );
+    return { acknowledged: true, recordCount: records.length };
   }
 
   private async handleCustomerRedact(shopDomain: string, body: any) {
@@ -151,7 +204,28 @@ export class GdprController {
     this.logger.log(`customers/redact — shop: ${shopDomain}, customer: ${customer?.email}`);
     const merchant = await this.merchantRepo.findOne({ where: { shopDomain } });
     if (merchant && customer?.email) {
-      await this.uploadRepo.delete({ merchantId: merchant.id, customerEmail: customer.email });
+      const uploads = await this.uploadRepo.find({
+        where: { merchantId: merchant.id, customerEmail: customer.email },
+      });
+      // Delete the actual files from object storage — deleting only the DB
+      // rows would leave the personal data (the uploaded images) in the bucket.
+      const freedBytes = await this.deleteUploadFiles(uploads);
+      if (uploads.length) {
+        await this.uploadRepo.delete({ merchantId: merchant.id, customerEmail: customer.email });
+        // Keep the storage counter honest (deleting rows directly would
+        // otherwise leave storageUsedBytes permanently inflated). Clamp at 0.
+        if (freedBytes > 0) {
+          await this.merchantRepo
+            .createQueryBuilder()
+            .update(Merchant)
+            .set({ storageUsedBytes: () => `GREATEST(0, storage_used_bytes - ${Number(freedBytes)})` })
+            .where('id = :id', { id: merchant.id })
+            .execute();
+        }
+      }
+      this.logger.log(
+        `customers/redact complete — removed ${uploads.length} upload(s), freed ${freedBytes} bytes for ${customer.email}`,
+      );
     }
     return { acknowledged: true };
   }
@@ -161,11 +235,35 @@ export class GdprController {
     const merchant = await this.merchantRepo.findOne({ where: { shopDomain } });
     if (!merchant) return { acknowledged: true, note: 'shop not found — already deleted' };
 
+    // Delete every stored file for this shop before dropping the DB rows:
+    // customer uploads AND merchant-uploaded preview/mockup templates.
+    const uploads = await this.uploadRepo.find({ where: { merchantId: merchant.id } });
+    await this.deleteUploadFiles(uploads);
+
+    const fields = await this.fieldRepo.find({ where: { merchantId: merchant.id } });
+    for (const f of fields) {
+      if (f.previewTemplateKey) {
+        await this.storageService
+          .deleteFile(f.previewTemplateKey)
+          .catch((e: any) =>
+            this.logger.warn(`GDPR shop/redact: could not delete template ${f.previewTemplateKey}: ${e?.message}`),
+          );
+      }
+    }
+
+    // Remove ALL of this merchant's rows. There are no FK cascades, so each
+    // table must be cleared explicitly or it would be left orphaned.
     await this.uploadRepo.delete({ merchantId: merchant.id });
+    await this.fieldRepo.delete({ merchantId: merchant.id });
+    await this.productRepo.delete({ merchantId: merchant.id });
+    await this.notificationRepo.delete({ merchantId: merchant.id });
     await this.settingsRepo.delete({ merchantId: merchant.id });
     await this.subRepo.delete({ merchantId: merchant.id });
     await this.merchantRepo.delete({ id: merchant.id });
-    this.logger.log(`shop/redact complete — deleted all data for ${shopDomain}`);
+
+    this.logger.log(
+      `shop/redact complete — deleted ${uploads.length} file(s) and all data for ${shopDomain}`,
+    );
     return { acknowledged: true };
   }
 }

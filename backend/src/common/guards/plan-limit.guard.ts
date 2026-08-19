@@ -37,7 +37,14 @@ export class PlanLimitGuard implements CanActivate {
       throw new ForbiddenException('Monthly upload limit reached. Please upgrade your plan.');
     }
 
-    if (merchant.storageUsedBytes >= plan.storageBytes) {
+    // storageBytes / storageUsedBytes are bigint columns, which TypeORM returns
+    // as STRINGS — comparing them directly does a lexicographic compare (e.g.
+    // "9999999" > "2147483648"), which is wrong. Coerce to numbers. A value of
+    // -1 means "unlimited".
+    if (
+      Number(plan.storageBytes) !== -1 &&
+      Number(merchant.storageUsedBytes) >= Number(plan.storageBytes)
+    ) {
       throw new ForbiddenException('Storage limit reached. Please upgrade your plan.');
     }
 

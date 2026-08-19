@@ -1,0 +1,278 @@
+diff --git a/backend/package.json b/backend/package.json
+index a004251..ff11a03 100644
+--- a/backend/package.json
++++ b/backend/package.json
+@@ -40,6 +40,7 @@
+     "@swc/cli": "^0.3.0",
+     "@swc/core": "^1.4.0",
+     "@types/express": "^4.17.21",
++    "@types/jest": "^29.5.12",
+     "@types/multer": "^1.4.11",
+     "@types/nock": "^11.1.0",
+     "@types/node": "^20.11.5",
+diff --git a/backend/src/common/guards/plan-limit.guard.ts b/backend/src/common/guards/plan-limit.guard.ts
+index c9ecf6c..b7f2ed8 100644
+--- a/backend/src/common/guards/plan-limit.guard.ts
++++ b/backend/src/common/guards/plan-limit.guard.ts
+@@ -37,7 +37,14 @@ export class PlanLimitGuard implements CanActivate {
+       throw new ForbiddenException('Monthly upload limit reached. Please upgrade your plan.');
+     }
+ 
+-    if (merchant.storageUsedBytes >= plan.storageBytes) {
++    // storageBytes / storageUsedBytes are bigint columns, which TypeORM returns
++    // as STRINGS — comparing them directly does a lexicographic compare (e.g.
++    // "9999999" > "2147483648"), which is wrong. Coerce to numbers. A value of
++    // -1 means "unlimited".
++    if (
++      Number(plan.storageBytes) !== -1 &&
++      Number(merchant.storageUsedBytes) >= Number(plan.storageBytes)
++    ) {
+       throw new ForbiddenException('Storage limit reached. Please upgrade your plan.');
+     }
+ 
+diff --git a/backend/src/gdpr/gdpr.controller.ts b/backend/src/gdpr/gdpr.controller.ts
+index 6721e3b..eddd901 100644
+--- a/backend/src/gdpr/gdpr.controller.ts
++++ b/backend/src/gdpr/gdpr.controller.ts
+@@ -9,8 +9,12 @@ import { ConfigService } from '@nestjs/config';
+ import * as crypto from 'crypto';
+ import { Merchant } from '../auth/entities/merchant.entity';
+ import { Upload } from '../uploads/entities/upload.entity';
++import { UploadField } from '../uploads/entities/upload-field.entity';
+ import { MerchantSettings } from '../settings/entities/merchant-settings.entity';
+ import { Subscription } from '../billing/entities/subscription.entity';
++import { Product } from '../products/entities/product.entity';
++import { Notification } from '../notifications/entities/notification.entity';
++import { StorageService } from '../storage/storage.service';
+ 
+ @ApiTags('GDPR')
+ @Controller('gdpr')
+@@ -22,13 +26,37 @@ export class GdprController {
+     private readonly merchantRepo: Repository<Merchant>,
+     @InjectRepository(Upload)
+     private readonly uploadRepo: Repository<Upload>,
++    @InjectRepository(UploadField)
++    private readonly fieldRepo: Repository<UploadField>,
+     @InjectRepository(MerchantSettings)
+     private readonly settingsRepo: Repository<MerchantSettings>,
+     @InjectRepository(Subscription)
+     private readonly subRepo: Repository<Subscription>,
++    @InjectRepository(Product)
++    private readonly productRepo: Repository<Product>,
++    @InjectRepository(Notification)
++    private readonly notificationRepo: Repository<Notification>,
++    private readonly storageService: StorageService,
+     private readonly configService: ConfigService,
+   ) {}
+ 
++  /** Delete a batch of uploads' underlying files from object storage. Returns
++   *  the total number of bytes freed (best-effort; a missing object is fine). */
++  private async deleteUploadFiles(uploads: Upload[]): Promise<number> {
++    let freedBytes = 0;
++    for (const u of uploads) {
++      if (u.s3Key) {
++        await this.storageService
++          .deleteFile(u.s3Key)
++          .catch((e: any) =>
++            this.logger.warn(`GDPR: could not delete file ${u.s3Key}: ${e?.message}`),
++          );
++      }
++      freedBytes += Number(u.fileSizeBytes || 0);
++    }
++    return freedBytes;
++  }
++
+   /**
+    * Verify Shopify webhook HMAC.
+    * MUST throw 400 (not 401) — Shopify's automated checker specifically
+@@ -141,9 +169,34 @@ export class GdprController {
+ 
+   private async handleCustomerDataRequest(shopDomain: string, body: any) {
+     const customer = body?.customer;
+-    this.logger.log(`data_request — shop: ${shopDomain}, customer: ${customer?.email || customer?.id}`);
+-    // TODO: email merchant with customer's upload records
+-    return { acknowledged: true };
++    this.logger.log(
++      `data_request — shop: ${shopDomain}, customer: ${customer?.email || customer?.id}`,
++    );
++
++    // Compile the data we hold for this customer so the merchant can fulfil the
++    // request. We store upload files + metadata keyed by customer email; gather
++    // a non-sensitive summary and log it for the merchant/support to action.
++    // (Shopify doesn't read this response body — the obligation is on the app
++    // to make the data available, which starts with compiling it here.)
++    const merchant = await this.merchantRepo.findOne({ where: { shopDomain } });
++    let records: Array<Record<string, any>> = [];
++    if (merchant && customer?.email) {
++      const uploads = await this.uploadRepo.find({
++        where: { merchantId: merchant.id, customerEmail: customer.email },
++      });
++      records = uploads.map((u) => ({
++        id: u.id,
++        fileName: u.originalFileName,
++        sizeBytes: Number(u.fileSizeBytes || 0),
++        mimeType: u.mimeType,
++        orderId: u.shopifyOrderId,
++        createdAt: u.createdAt,
++      }));
++    }
++    this.logger.log(
++      `data_request compiled ${records.length} record(s) for ${customer?.email} on ${shopDomain}: ${JSON.stringify(records)}`,
++    );
++    return { acknowledged: true, recordCount: records.length };
+   }
+ 
+   private async handleCustomerRedact(shopDomain: string, body: any) {
+@@ -151,7 +204,28 @@ export class GdprController {
+     this.logger.log(`customers/redact — shop: ${shopDomain}, customer: ${customer?.email}`);
+     const merchant = await this.merchantRepo.findOne({ where: { shopDomain } });
+     if (merchant && customer?.email) {
+-      await this.uploadRepo.delete({ merchantId: merchant.id, customerEmail: customer.email });
++      const uploads = await this.uploadRepo.find({
++        where: { merchantId: merchant.id, customerEmail: customer.email },
++      });
++      // Delete the actual files from object storage — deleting only the DB
++      // rows would leave the personal data (the uploaded images) in the bucket.
++      const freedBytes = await this.deleteUploadFiles(uploads);
++      if (uploads.length) {
++        await this.uploadRepo.delete({ merchantId: merchant.id, customerEmail: customer.email });
++        // Keep the storage counter honest (deleting rows directly would
++        // otherwise leave storageUsedBytes permanently inflated). Clamp at 0.
++        if (freedBytes > 0) {
++          await this.merchantRepo
++            .createQueryBuilder()
++            .update(Merchant)
++            .set({ storageUsedBytes: () => `GREATEST(0, storage_used_bytes - ${Number(freedBytes)})` })
++            .where('id = :id', { id: merchant.id })
++            .execute();
++        }
++      }
++      this.logger.log(
++        `customers/redact complete — removed ${uploads.length} upload(s), freed ${freedBytes} bytes for ${customer.email}`,
++      );
+     }
+     return { acknowledged: true };
+   }
+@@ -161,11 +235,35 @@ export class GdprController {
+     const merchant = await this.merchantRepo.findOne({ where: { shopDomain } });
+     if (!merchant) return { acknowledged: true, note: 'shop not found — already deleted' };
+ 
++    // Delete every stored file for this shop before dropping the DB rows:
++    // customer uploads AND merchant-uploaded preview/mockup templates.
++    const uploads = await this.uploadRepo.find({ where: { merchantId: merchant.id } });
++    await this.deleteUploadFiles(uploads);
++
++    const fields = await this.fieldRepo.find({ where: { merchantId: merchant.id } });
++    for (const f of fields) {
++      if (f.previewTemplateKey) {
++        await this.storageService
++          .deleteFile(f.previewTemplateKey)
++          .catch((e: any) =>
++            this.logger.warn(`GDPR shop/redact: could not delete template ${f.previewTemplateKey}: ${e?.message}`),
++          );
++      }
++    }
++
++    // Remove ALL of this merchant's rows. There are no FK cascades, so each
++    // table must be cleared explicitly or it would be left orphaned.
+     await this.uploadRepo.delete({ merchantId: merchant.id });
++    await this.fieldRepo.delete({ merchantId: merchant.id });
++    await this.productRepo.delete({ merchantId: merchant.id });
++    await this.notificationRepo.delete({ merchantId: merchant.id });
+     await this.settingsRepo.delete({ merchantId: merchant.id });
+     await this.subRepo.delete({ merchantId: merchant.id });
+     await this.merchantRepo.delete({ id: merchant.id });
+-    this.logger.log(`shop/redact complete — deleted all data for ${shopDomain}`);
++
++    this.logger.log(
++      `shop/redact complete — deleted ${uploads.length} file(s) and all data for ${shopDomain}`,
++    );
+     return { acknowledged: true };
+   }
+ }
+diff --git a/backend/src/gdpr/gdpr.module.ts b/backend/src/gdpr/gdpr.module.ts
+index dc65d25..4fd4799 100644
+--- a/backend/src/gdpr/gdpr.module.ts
++++ b/backend/src/gdpr/gdpr.module.ts
+@@ -4,13 +4,26 @@ import { ConfigModule } from '@nestjs/config';
+ import { GdprController } from './gdpr.controller';
+ import { Merchant } from '../auth/entities/merchant.entity';
+ import { Upload } from '../uploads/entities/upload.entity';
++import { UploadField } from '../uploads/entities/upload-field.entity';
+ import { MerchantSettings } from '../settings/entities/merchant-settings.entity';
+ import { Subscription } from '../billing/entities/subscription.entity';
++import { Product } from '../products/entities/product.entity';
++import { Notification } from '../notifications/entities/notification.entity';
++import { StorageModule } from '../storage/storage.module';
+ 
+ @Module({
+   imports: [
+     ConfigModule,
+-    TypeOrmModule.forFeature([Merchant, Upload, MerchantSettings, Subscription]),
++    TypeOrmModule.forFeature([
++      Merchant,
++      Upload,
++      UploadField,
++      MerchantSettings,
++      Subscription,
++      Product,
++      Notification,
++    ]),
++    StorageModule,
+   ],
+   controllers: [GdprController],
+ })
+diff --git a/backend/src/storefront/storefront.service.ts b/backend/src/storefront/storefront.service.ts
+index cb3e03f..154abaf 100644
+--- a/backend/src/storefront/storefront.service.ts
++++ b/backend/src/storefront/storefront.service.ts
+@@ -227,11 +227,18 @@ export class StorefrontService {
+     let imageHeight: number = null;
+     if (file.mimetype.startsWith('image/')) {
+       const dims = getImageDimensions(file.buffer);
+-      if (dims) { imageWidth = dims.width; imageHeight = dims.height; }
+-      if (field.minWidth && imageWidth < field.minWidth) throw new BadRequestException(`Min width: ${field.minWidth}px`);
+-      if (field.maxWidth && imageWidth > field.maxWidth) throw new BadRequestException(`Max width: ${field.maxWidth}px`);
+-      if (field.minHeight && imageHeight < field.minHeight) throw new BadRequestException(`Min height: ${field.minHeight}px`);
+-      if (field.maxHeight && imageHeight > field.maxHeight) throw new BadRequestException(`Max height: ${field.maxHeight}px`);
++      // Only enforce dimension rules when the dimensions were actually parsed.
++      // Otherwise imageWidth/imageHeight stay null, and `null < field.minWidth`
++      // coerces to `0 < minWidth` === true, wrongly rejecting a valid file with
++      // a misleading "Min width" error.
++      if (dims) {
++        imageWidth = dims.width;
++        imageHeight = dims.height;
++        if (field.minWidth && imageWidth < field.minWidth) throw new BadRequestException(`Min width: ${field.minWidth}px`);
++        if (field.maxWidth && imageWidth > field.maxWidth) throw new BadRequestException(`Max width: ${field.maxWidth}px`);
++        if (field.minHeight && imageHeight < field.minHeight) throw new BadRequestException(`Min height: ${field.minHeight}px`);
++        if (field.maxHeight && imageHeight > field.maxHeight) throw new BadRequestException(`Max height: ${field.maxHeight}px`);
++      }
+     }
+ 
+     const sanitized = this.securityService.sanitizeFileName(file.originalname);
+@@ -376,7 +383,15 @@ export class StorefrontService {
+   }
+ 
+   private async checkPlanLimits(merchant: Merchant) {
+-    const sub = await this.subRepo.findOne({ where: { merchantId: merchant.id, status: SubscriptionStatus.ACTIVE } });
++    // Match ACTIVE *and* TRIAL subscriptions — a merchant on a trial should get
++    // their trial plan's limits, not silently fall back to the Free plan.
++    const sub = await this.subRepo.findOne({
++      where: [
++        { merchantId: merchant.id, status: SubscriptionStatus.ACTIVE },
++        { merchantId: merchant.id, status: SubscriptionStatus.TRIAL },
++      ],
++      order: { createdAt: 'DESC' },
++    });
+     const plan = sub
+       ? await this.planRepo.findOne({ where: { id: sub.planId } })
+       : await this.planRepo.findOne({ where: { name: PlanName.FREE } });
+@@ -392,7 +407,7 @@ export class StorefrontService {
+       );
+       throw new ForbiddenException('This store is not accepting new uploads right now. Please try again later.');
+     }
+-    if (Number(merchant.storageUsedBytes) >= Number(plan.storageBytes)) {
++    if (Number(plan.storageBytes) !== -1 && Number(merchant.storageUsedBytes) >= Number(plan.storageBytes)) {
+       this.logger.warn(`Upload blocked for merchant ${merchant.id}: storage limit reached (plan: ${plan.displayName})`);
+       throw new ForbiddenException('This store is not accepting new uploads right now. Please try again later.');
+     }
