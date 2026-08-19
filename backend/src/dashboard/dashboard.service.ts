@@ -57,6 +57,10 @@ export class DashboardService {
       activeFields,
       storageUsedBytes: Number(merchant?.storageUsedBytes || 0),
       storageUsedFormatted: this.formatBytes(Number(merchant?.storageUsedBytes || 0)),
+      // True once the Filedrop block has rendered on the storefront at least
+      // once (set in storefront getFieldsForProduct). Drives the "Add the block
+      // to your theme" onboarding step so it reflects reality.
+      themeBlockAdded: !!merchant?.storefrontActivatedAt,
     };
   }
 

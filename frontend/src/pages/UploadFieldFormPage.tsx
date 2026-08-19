@@ -38,7 +38,7 @@ const defaultForm = {
   minFileSizeMb: 0,
   maxFiles: 1,
   allowedExtensions: [] as string[],
-  assignmentType: 'product',
+  assignmentType: 'store',
   assignedResourceIds: [] as string[],
   assignedTags: [] as string[],
   // Image validation

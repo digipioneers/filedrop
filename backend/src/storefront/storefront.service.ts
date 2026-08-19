@@ -11,6 +11,7 @@ import { StorageService } from '../storage/storage.service';
 import { SecurityService } from '../security/security.service';
 import { EmailService } from '../email/email.service';
 import { AppSettings } from '../admin/entities/app-settings.entity';
+import { Product } from '../products/entities/product.entity';
 import { v4 as uuid } from 'uuid';
 import { getImageDimensions } from '../common/utils/image-dimensions';
 import { buildDownloadFilename } from '../common/utils/download-filename.util';
@@ -28,6 +29,7 @@ export class StorefrontService {
     @InjectRepository(Plan) private readonly planRepo: Repository<Plan>,
     @InjectRepository(Subscription) private readonly subRepo: Repository<Subscription>,
     @InjectRepository(AppSettings) private readonly appSettingsRepo: Repository<AppSettings>,
+    @InjectRepository(Product) private readonly productRepo: Repository<Product>,
     private readonly storageService: StorageService,
     private readonly securityService: SecurityService,
     private readonly emailService: EmailService,
@@ -54,16 +56,50 @@ export class StorefrontService {
       order: { sortOrder: 'ASC' },
     });
 
+    // The widget only sends productId + variantId, so derive the product's
+    // collections and tags from our cached catalogue. This is what makes
+    // COLLECTION and TAG assignment actually work on the storefront.
+    let productCollectionIds: string[] = [];
+    let productTags: string[] = Array.isArray(tags) ? [...tags] : [];
+    if (productId) {
+      const product = await this.productRepo.findOne({
+        where: { merchantId, shopifyProductId: String(productId) },
+      });
+      if (product) {
+        productCollectionIds = (product.collections || []).map((c: any) => String(c.id));
+        if (Array.isArray(product.tags)) {
+          productTags = [...new Set([...productTags, ...product.tags])];
+        }
+      }
+    }
+
+    // The admin picker saves selections to `assignedResourceIds` (products /
+    // variants / collections) and `assignedTags`. Older data may still live in
+    // the legacy `assignmentIds` column, so fall back to it. Reading the wrong
+    // column here was why assigned fields never appeared on the storefront.
+    const resourceIds = (f: UploadField): string[] =>
+      f.assignedResourceIds && f.assignedResourceIds.length
+        ? f.assignedResourceIds
+        : f.assignmentIds || [];
+    const tagIds = (f: UploadField): string[] =>
+      f.assignedTags && f.assignedTags.length ? f.assignedTags : f.assignmentIds || [];
+
     return fields
       .filter(field => {
-        if (field.assignmentType === AssignmentType.STORE) return true;
-        if (field.assignmentType === AssignmentType.PRODUCT && productId)
-          return (field.assignmentIds || []).includes(productId);
-        if (field.assignmentType === AssignmentType.VARIANT && variantId)
-          return (field.assignmentIds || []).includes(variantId);
-        if (field.assignmentType === AssignmentType.TAG && tags.length)
-          return (field.assignmentIds || []).some(id => tags.includes(id));
-        return false;
+        switch (field.assignmentType) {
+          case AssignmentType.STORE:
+            return true;
+          case AssignmentType.PRODUCT:
+            return !!productId && resourceIds(field).includes(String(productId));
+          case AssignmentType.VARIANT:
+            return !!variantId && resourceIds(field).includes(String(variantId));
+          case AssignmentType.COLLECTION:
+            return productCollectionIds.some(c => resourceIds(field).includes(c));
+          case AssignmentType.TAG:
+            return productTags.some(t => tagIds(field).includes(t));
+          default:
+            return false;
+        }
       })
       .map(f => ({
         id: f.id,

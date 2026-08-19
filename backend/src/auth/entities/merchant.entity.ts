@@ -63,6 +63,14 @@ export class Merchant {
   @Column({ name: 'uninstalled_at', nullable: true, type: 'datetime' })
   uninstalledAt: Date;
 
+  // Set the first time the storefront widget fetches its fields, which only
+  // happens once the Filedrop theme block is actually placed and rendering on
+  // the storefront (or in the theme-editor preview). Used to drive the "Add the
+  // Filedrop block to your theme" onboarding step truthfully instead of
+  // assuming it's done. Null until the block has rendered at least once.
+  @Column({ name: 'storefront_activated_at', nullable: true, type: 'datetime' })
+  storefrontActivatedAt: Date | null;
+
   @CreateDateColumn({ name: 'installed_at' })
   installedAt: Date;
 

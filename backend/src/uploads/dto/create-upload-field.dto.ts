@@ -13,6 +13,19 @@ export class CreateUploadFieldDto {
   @IsOptional()
   assignmentIds?: string[];
 
+  // The frontend picker (ResourceAssignmentPicker) stores selected product /
+  // variant / collection ids here, and the entity + storefront matching read
+  // `assignedResourceIds`. These MUST be declared on the DTO: the global
+  // ValidationPipe runs with `whitelist: true`, which silently strips any
+  // property not listed here — which is why saved assignments were vanishing.
+  @IsArray()
+  @IsOptional()
+  assignedResourceIds?: string[];
+
+  @IsArray()
+  @IsOptional()
+  assignedTags?: string[];
+
   @IsString()
   @IsOptional()
   label?: string;

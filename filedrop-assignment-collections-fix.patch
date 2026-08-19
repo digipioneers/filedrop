@@ -1,0 +1,292 @@
+diff --git a/backend/src/products/products.service.ts b/backend/src/products/products.service.ts
+index 0720711..782072c 100644
+--- a/backend/src/products/products.service.ts
++++ b/backend/src/products/products.service.ts
+@@ -112,24 +112,58 @@ export class ProductsService {
+     const merchant = await this.merchantRepo.findOne({ where: { id: merchantId } });
+     if (!merchant) return [];
+ 
++    const accessToken = await this.shopifyTokenService.getValidAccessToken(merchant);
++    const base = `https://${merchant.shopDomain}/admin/api/2026-07`;
++    const headers = { 'X-Shopify-Access-Token': accessToken };
++
++    // Primary: GraphQL. One call returns ALL collection types (manual + smart),
++    // and it's the current, non-deprecated API — the REST collection endpoints
++    // behave inconsistently on some (especially newer, non-dev) stores, which
++    // is the most likely reason the list came back empty. IDs are normalised to
++    // the numeric form so they match the numeric collection ids we cache on
++    // products (what storefront collection-matching compares against).
+     try {
+-      const accessToken = await this.shopifyTokenService.getValidAccessToken(merchant);
+-      const res = await axios.get(
+-        `https://${merchant.shopDomain}/admin/api/2026-07/custom_collections.json?limit=250`,
+-        { headers: { 'X-Shopify-Access-Token': accessToken } },
++      const res = await axios.post(
++        `${base}/graphql.json`,
++        { query: `{ collections(first: 250) { edges { node { id title } } } }` },
++        { headers: { ...headers, 'Content-Type': 'application/json' } },
+       );
+-      const smart = await axios.get(
+-        `https://${merchant.shopDomain}/admin/api/2026-07/smart_collections.json?limit=250`,
+-        { headers: { 'X-Shopify-Access-Token': accessToken } },
+-      );
+-      return [
+-        ...(res.data.custom_collections ?? []),
+-        ...(smart.data.smart_collections ?? []),
+-      ].map((c: any) => ({ id: String(c.id), title: c.title }));
+-    } catch (err) {
+-      this.logger.error('Failed to fetch collections', err.message);
+-      return [];
++      const errors = res.data?.errors;
++      const edges = res.data?.data?.collections?.edges;
++      if (!errors && Array.isArray(edges)) {
++        const list = edges
++          .map((e: any) => e?.node)
++          .filter(Boolean)
++          .map((n: any) => ({
++            id: String(n.id).replace(/^gid:\/\/shopify\/Collection\//, ''),
++            title: n.title,
++          }));
++        if (list.length) return list;
++      } else if (errors) {
++        this.logger.warn(`GraphQL collections returned errors: ${JSON.stringify(errors)}`);
++      }
++    } catch (err: any) {
++      this.logger.warn(`GraphQL collections fetch failed, falling back to REST: ${err?.message}`);
++    }
++
++    // Fallback: REST custom + smart, each in its OWN try/catch so a failure of
++    // one doesn't discard the other (the previous single try/catch returned []
++    // — losing already-fetched custom collections — whenever the smart call
++    // threw).
++    const out: { id: string; title: string }[] = [];
++    try {
++      const r = await axios.get(`${base}/custom_collections.json?limit=250`, { headers });
++      for (const c of r.data?.custom_collections ?? []) out.push({ id: String(c.id), title: c.title });
++    } catch (err: any) {
++      this.logger.warn(`custom_collections fetch failed: ${err?.message}`);
++    }
++    try {
++      const r = await axios.get(`${base}/smart_collections.json?limit=250`, { headers });
++      for (const c of r.data?.smart_collections ?? []) out.push({ id: String(c.id), title: c.title });
++    } catch (err: any) {
++      this.logger.warn(`smart_collections fetch failed: ${err?.message}`);
+     }
++    return out;
+   }
+ 
+   async handleProductUpdate(merchantId: string, shopifyProduct: any): Promise<void> {
+diff --git a/backend/src/storefront/storefront.module.ts b/backend/src/storefront/storefront.module.ts
+index 9b5cd35..d2ba469 100644
+--- a/backend/src/storefront/storefront.module.ts
++++ b/backend/src/storefront/storefront.module.ts
+@@ -10,12 +10,13 @@ import { MerchantSettings } from '../settings/entities/merchant-settings.entity'
+ import { Plan } from '../plans/entities/plan.entity';
+ import { Subscription } from '../billing/entities/subscription.entity';
+ import { AppSettings } from '../admin/entities/app-settings.entity';
++import { Product } from '../products/entities/product.entity';
+ import { StorageModule } from '../storage/storage.module';
+ import { SecurityModule } from '../security/security.module';
+ 
+ @Module({
+   imports: [
+-    TypeOrmModule.forFeature([Upload, UploadField, Merchant, MerchantSettings, Plan, Subscription, AppSettings]),
++    TypeOrmModule.forFeature([Upload, UploadField, Merchant, MerchantSettings, Plan, Subscription, AppSettings, Product]),
+     MulterModule.register({ limits: { fileSize: 2 * 1024 * 1024 * 1024 } }),
+     StorageModule,
+     SecurityModule,
+diff --git a/backend/src/storefront/storefront.service.ts b/backend/src/storefront/storefront.service.ts
+index 326e387..cb3e03f 100644
+--- a/backend/src/storefront/storefront.service.ts
++++ b/backend/src/storefront/storefront.service.ts
+@@ -11,6 +11,7 @@ import { StorageService } from '../storage/storage.service';
+ import { SecurityService } from '../security/security.service';
+ import { EmailService } from '../email/email.service';
+ import { AppSettings } from '../admin/entities/app-settings.entity';
++import { Product } from '../products/entities/product.entity';
+ import { v4 as uuid } from 'uuid';
+ import { getImageDimensions } from '../common/utils/image-dimensions';
+ import { buildDownloadFilename } from '../common/utils/download-filename.util';
+@@ -28,6 +29,7 @@ export class StorefrontService {
+     @InjectRepository(Plan) private readonly planRepo: Repository<Plan>,
+     @InjectRepository(Subscription) private readonly subRepo: Repository<Subscription>,
+     @InjectRepository(AppSettings) private readonly appSettingsRepo: Repository<AppSettings>,
++    @InjectRepository(Product) private readonly productRepo: Repository<Product>,
+     private readonly storageService: StorageService,
+     private readonly securityService: SecurityService,
+     private readonly emailService: EmailService,
+@@ -54,16 +56,50 @@ export class StorefrontService {
+       order: { sortOrder: 'ASC' },
+     });
+ 
++    // The widget only sends productId + variantId, so derive the product's
++    // collections and tags from our cached catalogue. This is what makes
++    // COLLECTION and TAG assignment actually work on the storefront.
++    let productCollectionIds: string[] = [];
++    let productTags: string[] = Array.isArray(tags) ? [...tags] : [];
++    if (productId) {
++      const product = await this.productRepo.findOne({
++        where: { merchantId, shopifyProductId: String(productId) },
++      });
++      if (product) {
++        productCollectionIds = (product.collections || []).map((c: any) => String(c.id));
++        if (Array.isArray(product.tags)) {
++          productTags = [...new Set([...productTags, ...product.tags])];
++        }
++      }
++    }
++
++    // The admin picker saves selections to `assignedResourceIds` (products /
++    // variants / collections) and `assignedTags`. Older data may still live in
++    // the legacy `assignmentIds` column, so fall back to it. Reading the wrong
++    // column here was why assigned fields never appeared on the storefront.
++    const resourceIds = (f: UploadField): string[] =>
++      f.assignedResourceIds && f.assignedResourceIds.length
++        ? f.assignedResourceIds
++        : f.assignmentIds || [];
++    const tagIds = (f: UploadField): string[] =>
++      f.assignedTags && f.assignedTags.length ? f.assignedTags : f.assignmentIds || [];
++
+     return fields
+       .filter(field => {
+-        if (field.assignmentType === AssignmentType.STORE) return true;
+-        if (field.assignmentType === AssignmentType.PRODUCT && productId)
+-          return (field.assignmentIds || []).includes(productId);
+-        if (field.assignmentType === AssignmentType.VARIANT && variantId)
+-          return (field.assignmentIds || []).includes(variantId);
+-        if (field.assignmentType === AssignmentType.TAG && tags.length)
+-          return (field.assignmentIds || []).some(id => tags.includes(id));
+-        return false;
++        switch (field.assignmentType) {
++          case AssignmentType.STORE:
++            return true;
++          case AssignmentType.PRODUCT:
++            return !!productId && resourceIds(field).includes(String(productId));
++          case AssignmentType.VARIANT:
++            return !!variantId && resourceIds(field).includes(String(variantId));
++          case AssignmentType.COLLECTION:
++            return productCollectionIds.some(c => resourceIds(field).includes(c));
++          case AssignmentType.TAG:
++            return productTags.some(t => tagIds(field).includes(t));
++          default:
++            return false;
++        }
+       })
+       .map(f => ({
+         id: f.id,
+diff --git a/backend/src/uploads/dto/create-upload-field.dto.ts b/backend/src/uploads/dto/create-upload-field.dto.ts
+index 1887689..f73bf59 100644
+--- a/backend/src/uploads/dto/create-upload-field.dto.ts
++++ b/backend/src/uploads/dto/create-upload-field.dto.ts
+@@ -13,6 +13,19 @@ export class CreateUploadFieldDto {
+   @IsOptional()
+   assignmentIds?: string[];
+ 
++  // The frontend picker (ResourceAssignmentPicker) stores selected product /
++  // variant / collection ids here, and the entity + storefront matching read
++  // `assignedResourceIds`. These MUST be declared on the DTO: the global
++  // ValidationPipe runs with `whitelist: true`, which silently strips any
++  // property not listed here — which is why saved assignments were vanishing.
++  @IsArray()
++  @IsOptional()
++  assignedResourceIds?: string[];
++
++  @IsArray()
++  @IsOptional()
++  assignedTags?: string[];
++
+   @IsString()
+   @IsOptional()
+   label?: string;
+diff --git a/backend/src/uploads/dto/update-upload-field.dto.ts b/backend/src/uploads/dto/update-upload-field.dto.ts
+index 1887689..f73bf59 100644
+--- a/backend/src/uploads/dto/update-upload-field.dto.ts
++++ b/backend/src/uploads/dto/update-upload-field.dto.ts
+@@ -13,6 +13,19 @@ export class CreateUploadFieldDto {
+   @IsOptional()
+   assignmentIds?: string[];
+ 
++  // The frontend picker (ResourceAssignmentPicker) stores selected product /
++  // variant / collection ids here, and the entity + storefront matching read
++  // `assignedResourceIds`. These MUST be declared on the DTO: the global
++  // ValidationPipe runs with `whitelist: true`, which silently strips any
++  // property not listed here — which is why saved assignments were vanishing.
++  @IsArray()
++  @IsOptional()
++  assignedResourceIds?: string[];
++
++  @IsArray()
++  @IsOptional()
++  assignedTags?: string[];
++
+   @IsString()
+   @IsOptional()
+   label?: string;
+diff --git a/frontend/src/pages/DashboardPage.tsx b/frontend/src/pages/DashboardPage.tsx
+index c8e3fe9..4e87c06 100644
+--- a/frontend/src/pages/DashboardPage.tsx
++++ b/frontend/src/pages/DashboardPage.tsx
+@@ -14,6 +14,25 @@ import { formatBytes } from '../utils/format';
+ 
+ const BRAND = '#6A47F5';
+ 
++// Resolve the current shop domain (e.g. "my-store.myshopify.com"). App Bridge
++// v4 (loaded via CDN) exposes it on window.shopify.config.shop; fall back to
++// the ?shop= URL param the embedded app is loaded with.
++function getShopDomain(): string | null {
++  const w = window as any;
++  return (
++    w?.shopify?.config?.shop ||
++    new URLSearchParams(window.location.search).get('shop') ||
++    null
++  );
++}
++
++// The admin.shopify.com store handle is the shop subdomain without the
++// ".myshopify.com" suffix (e.g. "my-store").
++function getStoreHandle(): string | null {
++  const shop = getShopDomain();
++  return shop ? shop.replace(/\.myshopify\.com$/, '') : null;
++}
++
+ function StatCard({
+   title, value, helpText,
+ }: {
+@@ -152,7 +171,13 @@ export function DashboardPage() {
+                     description="Open the theme editor and drop the Filedrop upload block onto your product or cart page to finish installation."
+                     actionLabel="Go to theme editor"
+                     onAction={() => {
+-                      window.open('shopify:admin/themes/current/editor', '_top');
++                      const handle = getStoreHandle();
++                      if (handle) {
++                        window.open(
++                          `https://admin.shopify.com/store/${handle}/themes/current/editor`,
++                          '_blank',
++                        );
++                      }
+                     }}
+                   />
+                   <ChecklistStep
+@@ -168,7 +193,8 @@ export function DashboardPage() {
+                     description="Preview a field on your storefront, place a test order, and confirm the file appears on the order."
+                     actionLabel="Open your store"
+                     onAction={() => {
+-                      window.open('shopify:admin/online_store', '_top');
++                      const shop = getShopDomain();
++                      if (shop) window.open(`https://${shop}/`, '_blank');
+                     }}
+                   />
+                 </Box>
+diff --git a/frontend/src/pages/UploadFieldFormPage.tsx b/frontend/src/pages/UploadFieldFormPage.tsx
+index df5c31f..ef8887f 100644
+--- a/frontend/src/pages/UploadFieldFormPage.tsx
++++ b/frontend/src/pages/UploadFieldFormPage.tsx
+@@ -38,7 +38,7 @@ const defaultForm = {
+   minFileSizeMb: 0,
+   maxFiles: 1,
+   allowedExtensions: [] as string[],
+-  assignmentType: 'product',
++  assignmentType: 'store',
+   assignedResourceIds: [] as string[],
+   assignedTags: [] as string[],
+   // Image validation

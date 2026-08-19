@@ -1,0 +1,54 @@
+diff --git a/backend/src/auth/entities/merchant.entity.ts b/backend/src/auth/entities/merchant.entity.ts
+index 4616bce..10b6163 100644
+--- a/backend/src/auth/entities/merchant.entity.ts
++++ b/backend/src/auth/entities/merchant.entity.ts
+@@ -63,6 +63,14 @@ export class Merchant {
+   @Column({ name: 'uninstalled_at', nullable: true, type: 'datetime' })
+   uninstalledAt: Date;
+ 
++  // Set the first time the storefront widget fetches its fields, which only
++  // happens once the Filedrop theme block is actually placed and rendering on
++  // the storefront (or in the theme-editor preview). Used to drive the "Add the
++  // Filedrop block to your theme" onboarding step truthfully instead of
++  // assuming it's done. Null until the block has rendered at least once.
++  @Column({ name: 'storefront_activated_at', nullable: true, type: 'datetime' })
++  storefrontActivatedAt: Date | null;
++
+   @CreateDateColumn({ name: 'installed_at' })
+   installedAt: Date;
+ 
+diff --git a/backend/src/dashboard/dashboard.service.ts b/backend/src/dashboard/dashboard.service.ts
+index 2944c91..c085b9d 100644
+--- a/backend/src/dashboard/dashboard.service.ts
++++ b/backend/src/dashboard/dashboard.service.ts
+@@ -57,6 +57,10 @@ export class DashboardService {
+       activeFields,
+       storageUsedBytes: Number(merchant?.storageUsedBytes || 0),
+       storageUsedFormatted: this.formatBytes(Number(merchant?.storageUsedBytes || 0)),
++      // True once the Filedrop block has rendered on the storefront at least
++      // once (set in storefront getFieldsForProduct). Drives the "Add the block
++      // to your theme" onboarding step so it reflects reality.
++      themeBlockAdded: !!merchant?.storefrontActivatedAt,
+     };
+   }
+ 
+diff --git a/backend/src/storefront/storefront.service.ts b/backend/src/storefront/storefront.service.ts
+index 326e387..9004a0b 100644
+--- a/backend/src/storefront/storefront.service.ts
++++ b/backend/src/storefront/storefront.service.ts
+@@ -49,6 +49,15 @@ export class StorefrontService {
+     const merchant = await this.merchantRepo.findOne({ where: { id: merchantId, isActive: true } });
+     if (!merchant) throw new NotFoundException('Store not found');
+ 
++    // First time the widget renders on the storefront, record it — this is the
++    // truthful signal that the theme block has been added and is rendering.
++    // Fire-and-forget so it never slows the storefront request; writes once.
++    if (!merchant.storefrontActivatedAt) {
++      void this.merchantRepo
++        .update({ id: merchant.id }, { storefrontActivatedAt: new Date() })
++        .catch(() => undefined);
++    }
++
+     const fields = await this.fieldRepo.find({
+       where: { merchantId, isActive: true },
+       order: { sortOrder: 'ASC' },

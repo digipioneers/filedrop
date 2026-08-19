@@ -112,24 +112,58 @@ export class ProductsService {
     const merchant = await this.merchantRepo.findOne({ where: { id: merchantId } });
     if (!merchant) return [];
 
+    const accessToken = await this.shopifyTokenService.getValidAccessToken(merchant);
+    const base = `https://${merchant.shopDomain}/admin/api/2026-07`;
+    const headers = { 'X-Shopify-Access-Token': accessToken };
+
+    // Primary: GraphQL. One call returns ALL collection types (manual + smart),
+    // and it's the current, non-deprecated API — the REST collection endpoints
+    // behave inconsistently on some (especially newer, non-dev) stores, which
+    // is the most likely reason the list came back empty. IDs are normalised to
+    // the numeric form so they match the numeric collection ids we cache on
+    // products (what storefront collection-matching compares against).
     try {
-      const accessToken = await this.shopifyTokenService.getValidAccessToken(merchant);
-      const res = await axios.get(
-        `https://${merchant.shopDomain}/admin/api/2026-07/custom_collections.json?limit=250`,
-        { headers: { 'X-Shopify-Access-Token': accessToken } },
+      const res = await axios.post(
+        `${base}/graphql.json`,
+        { query: `{ collections(first: 250) { edges { node { id title } } } }` },
+        { headers: { ...headers, 'Content-Type': 'application/json' } },
       );
-      const smart = await axios.get(
-        `https://${merchant.shopDomain}/admin/api/2026-07/smart_collections.json?limit=250`,
-        { headers: { 'X-Shopify-Access-Token': accessToken } },
-      );
-      return [
-        ...(res.data.custom_collections ?? []),
-        ...(smart.data.smart_collections ?? []),
-      ].map((c: any) => ({ id: String(c.id), title: c.title }));
-    } catch (err) {
-      this.logger.error('Failed to fetch collections', err.message);
-      return [];
+      const errors = res.data?.errors;
+      const edges = res.data?.data?.collections?.edges;
+      if (!errors && Array.isArray(edges)) {
+        const list = edges
+          .map((e: any) => e?.node)
+          .filter(Boolean)
+          .map((n: any) => ({
+            id: String(n.id).replace(/^gid:\/\/shopify\/Collection\//, ''),
+            title: n.title,
+          }));
+        if (list.length) return list;
+      } else if (errors) {
+        this.logger.warn(`GraphQL collections returned errors: ${JSON.stringify(errors)}`);
+      }
+    } catch (err: any) {
+      this.logger.warn(`GraphQL collections fetch failed, falling back to REST: ${err?.message}`);
     }
+
+    // Fallback: REST custom + smart, each in its OWN try/catch so a failure of
+    // one doesn't discard the other (the previous single try/catch returned []
+    // — losing already-fetched custom collections — whenever the smart call
+    // threw).
+    const out: { id: string; title: string }[] = [];
+    try {
+      const r = await axios.get(`${base}/custom_collections.json?limit=250`, { headers });
+      for (const c of r.data?.custom_collections ?? []) out.push({ id: String(c.id), title: c.title });
+    } catch (err: any) {
+      this.logger.warn(`custom_collections fetch failed: ${err?.message}`);
+    }
+    try {
+      const r = await axios.get(`${base}/smart_collections.json?limit=250`, { headers });
+      for (const c of r.data?.smart_collections ?? []) out.push({ id: String(c.id), title: c.title });
+    } catch (err: any) {
+      this.logger.warn(`smart_collections fetch failed: ${err?.message}`);
+    }
+    return out;
   }
 
   async handleProductUpdate(merchantId: string, shopifyProduct: any): Promise<void> {

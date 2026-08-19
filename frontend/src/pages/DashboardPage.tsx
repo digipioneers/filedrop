@@ -14,6 +14,25 @@ import { formatBytes } from '../utils/format';
 
 const BRAND = '#6A47F5';
 
+// Resolve the current shop domain (e.g. "my-store.myshopify.com"). App Bridge
+// v4 (loaded via CDN) exposes it on window.shopify.config.shop; fall back to
+// the ?shop= URL param the embedded app is loaded with.
+function getShopDomain(): string | null {
+  const w = window as any;
+  return (
+    w?.shopify?.config?.shop ||
+    new URLSearchParams(window.location.search).get('shop') ||
+    null
+  );
+}
+
+// The admin.shopify.com store handle is the shop subdomain without the
+// ".myshopify.com" suffix (e.g. "my-store").
+function getStoreHandle(): string | null {
+  const shop = getShopDomain();
+  return shop ? shop.replace(/\.myshopify\.com$/, '') : null;
+}
+
 function StatCard({
   title, value, helpText,
 }: {
@@ -152,7 +171,13 @@ export function DashboardPage() {
                     description="Open the theme editor and drop the Filedrop upload block onto your product or cart page to finish installation."
                     actionLabel="Go to theme editor"
                     onAction={() => {
-                      window.open('shopify:admin/themes/current/editor', '_top');
+                      const handle = getStoreHandle();
+                      if (handle) {
+                        window.open(
+                          `https://admin.shopify.com/store/${handle}/themes/current/editor`,
+                          '_blank',
+                        );
+                      }
                     }}
                   />
                   <ChecklistStep
@@ -168,7 +193,8 @@ export function DashboardPage() {
                     description="Preview a field on your storefront, place a test order, and confirm the file appears on the order."
                     actionLabel="Open your store"
                     onAction={() => {
-                      window.open('shopify:admin/online_store', '_top');
+                      const shop = getShopDomain();
+                      if (shop) window.open(`https://${shop}/`, '_blank');
                     }}
                   />
                 </Box>
