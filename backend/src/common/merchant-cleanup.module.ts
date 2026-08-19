@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ConfigModule } from '@nestjs/config';
-import { GdprController } from './gdpr.controller';
+import { MerchantCleanupService } from './merchant-cleanup.service';
 import { Merchant } from '../auth/entities/merchant.entity';
 import { Upload } from '../uploads/entities/upload.entity';
 import { UploadField } from '../uploads/entities/upload-field.entity';
@@ -10,11 +9,9 @@ import { Subscription } from '../billing/entities/subscription.entity';
 import { Product } from '../products/entities/product.entity';
 import { Notification } from '../notifications/entities/notification.entity';
 import { StorageModule } from '../storage/storage.module';
-import { MerchantCleanupModule } from '../common/merchant-cleanup.module';
 
 @Module({
   imports: [
-    ConfigModule,
     TypeOrmModule.forFeature([
       Merchant,
       Upload,
@@ -25,8 +22,8 @@ import { MerchantCleanupModule } from '../common/merchant-cleanup.module';
       Notification,
     ]),
     StorageModule,
-    MerchantCleanupModule,
   ],
-  controllers: [GdprController],
+  providers: [MerchantCleanupService],
+  exports: [MerchantCleanupService],
 })
-export class GdprModule {}
+export class MerchantCleanupModule {}

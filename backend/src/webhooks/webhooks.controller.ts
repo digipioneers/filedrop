@@ -8,6 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import { WebhooksService } from './webhooks.service';
+import { MerchantCleanupService } from '../common/merchant-cleanup.service';
 import { Merchant } from '../auth/entities/merchant.entity';
 import { Subscription, SubscriptionStatus } from '../billing/entities/subscription.entity';
 
@@ -19,6 +20,7 @@ export class WebhooksController {
   constructor(
     private readonly webhooksService: WebhooksService,
     private readonly configService: ConfigService,
+    private readonly merchantCleanup: MerchantCleanupService,
     @InjectRepository(Merchant)
     private readonly merchantRepo: Repository<Merchant>,
     @InjectRepository(Subscription)
@@ -66,21 +68,19 @@ export class WebhooksController {
   ) {
     this.verifyWebhook(req, hmac, 'app/uninstalled', shop);
     this.logger.log(`App uninstalled for shop: ${shop}`);
-    const merchant = await this.merchantRepo.findOne({ where: { shopDomain: shop } });
-    await this.merchantRepo.update({ shopDomain: shop }, { isActive: false, uninstalledAt: new Date() });
-    if (merchant) {
-      // Shopify itself automatically cancels any active app subscription
-      // charge when the app is uninstalled — this just brings our own
-      // record in line with that, so a future reinstall starts from the
-      // free plan by default instead of showing a paid plan Shopify isn't
-      // actually charging for anymore.
-      const result = await this.subRepo.update(
-        { merchantId: merchant.id, status: SubscriptionStatus.ACTIVE },
-        { status: SubscriptionStatus.CANCELLED },
+
+    // Shopify automatically cancels any active app-subscription charge on
+    // uninstall, so there's nothing to cancel on their side. On ours, the
+    // requirement is a clean slate: permanently delete every file and every
+    // database row for this shop. Without this, the merchant row simply gets
+    // flagged inactive and a later reinstall reactivates it — resurfacing all
+    // the old uploads, fields and settings, which is exactly the "old data
+    // came back after reinstall" problem.
+    const result = await this.merchantCleanup.purgeMerchantData(shop);
+    if (result) {
+      this.logger.log(
+        `Uninstall purge complete for ${shop} — deleted ${result.deletedFiles} file(s) and all records.`,
       );
-      if (result.affected) {
-        this.logger.log(`Cancelled ${result.affected} active subscription(s) for ${shop} on uninstall`);
-      }
     }
     return { ok: true };
   }

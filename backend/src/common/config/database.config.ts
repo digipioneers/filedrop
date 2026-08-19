@@ -31,7 +31,14 @@ export const databaseConfig = (config: ConfigService): any => {
     password: fromUrl.password || config.get('DB_PASSWORD', 'cfup_password'),
     database: fromUrl.database || config.get('DB_NAME',     'cfup'),
     autoLoadEntities: true,
-    synchronize: true, // Auto-create tables on startup
+    // Schema auto-sync. TypeORM's synchronize rewrites the live schema to match
+    // the entities on every boot — convenient early on, but in production it can
+    // silently ALTER or DROP columns and lose data as entities evolve. It is now
+    // OFF by default and only enabled when DB_SYNCHRONIZE=true. On a brand-new
+    // database, set DB_SYNCHRONIZE=true for the first boot to create the tables,
+    // then unset it. (An existing database already has its tables, so leaving it
+    // off is safe and is the correct production setting.)
+    synchronize: config.get('DB_SYNCHRONIZE', 'false') === 'true',
     logging: false,
     charset: 'utf8mb4',
     timezone: 'Z',

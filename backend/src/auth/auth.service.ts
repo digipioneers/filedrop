@@ -64,7 +64,13 @@ export class AuthService {
       .update(message)
       .digest('hex');
 
-    return crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(hmac));
+    const computedBuf = Buffer.from(computed);
+    const providedBuf = Buffer.from(hmac);
+    // timingSafeEqual throws if the two buffers differ in length, so a malformed
+    // hmac of the wrong length would crash (500) instead of being rejected.
+    // Guard the length first, then compare in constant time.
+    if (computedBuf.length !== providedBuf.length) return false;
+    return crypto.timingSafeEqual(computedBuf, providedBuf);
   }
 
   /**

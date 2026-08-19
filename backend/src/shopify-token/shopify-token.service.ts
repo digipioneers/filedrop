@@ -23,6 +23,13 @@ import { Merchant } from '../auth/entities/merchant.entity';
 export class ShopifyTokenService {
   private readonly logger = new Logger(ShopifyTokenService.name);
 
+  // In-flight refreshes, keyed by merchant id. If several requests for the same
+  // shop all find the token expiring at once, they share ONE refresh call
+  // instead of each POSTing a refresh — which mattered because Shopify rotates
+  // (invalidates) the refresh token on first use, so concurrent refreshes would
+  // make all but the first fail with invalid_grant.
+  private readonly inflightRefresh = new Map<string, Promise<string>>();
+
   constructor(
     @InjectRepository(Merchant) private readonly merchantRepo: Repository<Merchant>,
     private readonly configService: ConfigService,
@@ -46,40 +53,72 @@ export class ShopifyTokenService {
       return merchant.accessToken;
     }
 
+    // Coalesce concurrent refreshes for this shop into a single call.
+    const existing = this.inflightRefresh.get(merchant.id);
+    if (existing) return existing;
+
+    const refreshPromise = this.refreshAccessToken(merchant).finally(() => {
+      this.inflightRefresh.delete(merchant.id);
+    });
+    this.inflightRefresh.set(merchant.id, refreshPromise);
+    return refreshPromise;
+  }
+
+  private async refreshAccessToken(merchant: Merchant): Promise<string> {
     this.logger.log(`Access token expired/expiring soon for shop=${merchant.shopDomain}, refreshing...`);
 
     const apiKey = this.configService.get('SHOPIFY_API_KEY');
     const apiSecret = this.configService.get('SHOPIFY_API_SECRET');
 
-    const response = await axios.post(
-      `https://${merchant.shopDomain}/admin/oauth/access_token`,
-      {
-        client_id: apiKey,
-        client_secret: apiSecret,
-        grant_type: 'refresh_token',
-        refresh_token: merchant.refreshToken,
-      },
-    );
+    try {
+      const response = await axios.post(
+        `https://${merchant.shopDomain}/admin/oauth/access_token`,
+        {
+          client_id: apiKey,
+          client_secret: apiSecret,
+          grant_type: 'refresh_token',
+          refresh_token: merchant.refreshToken,
+        },
+      );
 
-    const { access_token, refresh_token, expires_in } = response.data;
-    const newExpiresAt = new Date(Date.now() + (expires_in - 60) * 1000);
+      const { access_token, refresh_token, expires_in } = response.data;
+      const newExpiresAt = new Date(Date.now() + ((Number(expires_in) || 3600) - 60) * 1000);
 
-    await this.merchantRepo.update(merchant.id, {
-      accessToken: access_token,
-      // Shopify rotates the refresh token on every use — the old one is
-      // invalidated, so the new one MUST be persisted every time.
-      refreshToken: refresh_token,
-      tokenExpiresAt: newExpiresAt,
-    });
+      await this.merchantRepo.update(merchant.id, {
+        accessToken: access_token,
+        // Shopify rotates the refresh token on every use — the old one is
+        // invalidated, so the new one MUST be persisted every time.
+        refreshToken: refresh_token,
+        tokenExpiresAt: newExpiresAt,
+      });
 
-    // Keep the in-memory object in sync too, in case the caller reuses it
-    // after this call without re-fetching from the DB.
-    merchant.accessToken = access_token;
-    merchant.refreshToken = refresh_token;
-    merchant.tokenExpiresAt = newExpiresAt;
+      // Keep the in-memory object in sync too, in case the caller reuses it
+      // after this call without re-fetching from the DB.
+      merchant.accessToken = access_token;
+      merchant.refreshToken = refresh_token;
+      merchant.tokenExpiresAt = newExpiresAt;
 
-    this.logger.log(`Refreshed access token for shop=${merchant.shopDomain}, valid until ${newExpiresAt.toISOString()}`);
-
-    return access_token;
+      this.logger.log(`Refreshed access token for shop=${merchant.shopDomain}, valid until ${newExpiresAt.toISOString()}`);
+      return access_token;
+    } catch (err: any) {
+      this.logger.error(
+        `Token refresh failed for shop=${merchant.shopDomain}: ${err?.response?.data?.error || err?.message}`,
+      );
+      // A parallel request may have refreshed and persisted a fresh token
+      // moments ago (e.g. the refresh token we just tried was already rotated).
+      // Re-read from the DB and use that if present, so we recover instead of
+      // throwing an opaque 500.
+      const fresh = await this.merchantRepo.findOne({ where: { id: merchant.id } });
+      if (fresh?.accessToken && fresh.accessToken !== merchant.accessToken) {
+        merchant.accessToken = fresh.accessToken;
+        merchant.refreshToken = fresh.refreshToken;
+        merchant.tokenExpiresAt = fresh.tokenExpiresAt;
+        return fresh.accessToken;
+      }
+      // Nothing better available — return the current token and let the actual
+      // Shopify API call surface the auth failure (which callers handle) rather
+      // than failing here.
+      return merchant.accessToken;
+    }
   }
 }

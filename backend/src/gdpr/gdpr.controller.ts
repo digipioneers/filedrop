@@ -15,6 +15,7 @@ import { Subscription } from '../billing/entities/subscription.entity';
 import { Product } from '../products/entities/product.entity';
 import { Notification } from '../notifications/entities/notification.entity';
 import { StorageService } from '../storage/storage.service';
+import { MerchantCleanupService } from '../common/merchant-cleanup.service';
 
 @ApiTags('GDPR')
 @Controller('gdpr')
@@ -37,6 +38,7 @@ export class GdprController {
     @InjectRepository(Notification)
     private readonly notificationRepo: Repository<Notification>,
     private readonly storageService: StorageService,
+    private readonly merchantCleanup: MerchantCleanupService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -232,37 +234,11 @@ export class GdprController {
 
   private async handleShopRedact(shopDomain: string) {
     this.logger.log(`shop/redact — shop: ${shopDomain}`);
-    const merchant = await this.merchantRepo.findOne({ where: { shopDomain } });
-    if (!merchant) return { acknowledged: true, note: 'shop not found — already deleted' };
-
-    // Delete every stored file for this shop before dropping the DB rows:
-    // customer uploads AND merchant-uploaded preview/mockup templates.
-    const uploads = await this.uploadRepo.find({ where: { merchantId: merchant.id } });
-    await this.deleteUploadFiles(uploads);
-
-    const fields = await this.fieldRepo.find({ where: { merchantId: merchant.id } });
-    for (const f of fields) {
-      if (f.previewTemplateKey) {
-        await this.storageService
-          .deleteFile(f.previewTemplateKey)
-          .catch((e: any) =>
-            this.logger.warn(`GDPR shop/redact: could not delete template ${f.previewTemplateKey}: ${e?.message}`),
-          );
-      }
-    }
-
-    // Remove ALL of this merchant's rows. There are no FK cascades, so each
-    // table must be cleared explicitly or it would be left orphaned.
-    await this.uploadRepo.delete({ merchantId: merchant.id });
-    await this.fieldRepo.delete({ merchantId: merchant.id });
-    await this.productRepo.delete({ merchantId: merchant.id });
-    await this.notificationRepo.delete({ merchantId: merchant.id });
-    await this.settingsRepo.delete({ merchantId: merchant.id });
-    await this.subRepo.delete({ merchantId: merchant.id });
-    await this.merchantRepo.delete({ id: merchant.id });
-
+    // Same permanent deletion used on uninstall — one source of truth.
+    const result = await this.merchantCleanup.purgeMerchantData(shopDomain);
+    if (!result) return { acknowledged: true, note: 'shop not found — already deleted' };
     this.logger.log(
-      `shop/redact complete — deleted ${uploads.length} file(s) and all data for ${shopDomain}`,
+      `shop/redact complete — deleted ${result.deletedFiles} file(s) and all data for ${shopDomain}`,
     );
     return { acknowledged: true };
   }

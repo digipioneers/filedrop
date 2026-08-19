@@ -66,7 +66,8 @@ export class StorefrontService {
         where: { merchantId, shopifyProductId: String(productId) },
       });
       if (product) {
-        productCollectionIds = (product.collections || []).map((c: any) => String(c.id));
+        productCollectionIds = (Array.isArray(product.collections) ? product.collections : [])
+          .map((c: any) => String(c.id));
         if (Array.isArray(product.tags)) {
           productTags = [...new Set([...productTags, ...product.tags])];
         }

@@ -28,8 +28,15 @@ async function bootstrap() {
   app.setGlobalPrefix('api/v1', { exclude: ['/'] });
 
   app.enableCors({
+    // The storefront widget calls the public /storefront/* endpoints from every
+    // merchant's own (and custom) domain, so the origin must stay reflective.
+    // That is only safe because this API authenticates with the Authorization
+    // (Bearer JWT) and X-Admin-Key headers — never cookies — so credentialed
+    // (cookie) cross-origin requests are explicitly disabled. Reflecting the
+    // origin *with* credentials:true would have let any site make authenticated
+    // cookie requests.
     origin: true,
-    credentials: true,
+    credentials: false,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
       'Content-Type', 'Authorization',

@@ -34,7 +34,10 @@ export class BillingService {
 
   async getCurrentPlan(merchantId: string) {
     const sub = await this.subRepo.findOne({
-      where: { merchantId, status: SubscriptionStatus.ACTIVE },
+      where: [
+        { merchantId, status: SubscriptionStatus.ACTIVE },
+        { merchantId, status: SubscriptionStatus.TRIAL },
+      ],
       order: { createdAt: 'DESC' },
     });
     const plan = sub
@@ -60,7 +63,12 @@ export class BillingService {
     if (!plan) throw new NotFoundException(`Plan ${planName} not found`);
 
     if (plan.monthlyPrice === 0) {
-      return this.activateFreePlan(merchant.id);
+      const subscription = await this.activateFreePlan(merchant.id);
+      // Return the SAME shape as the paid path so callers don't have to handle
+      // two different response types. Free activation has no Shopify checkout,
+      // so confirmationUrl is null (the frontend treats null as "no redirect,
+      // already active").
+      return { confirmationUrl: null, plan, subscription };
     }
 
     if (!merchant.accessToken) {

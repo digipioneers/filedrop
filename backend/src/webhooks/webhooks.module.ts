@@ -8,6 +8,7 @@ import { WebhooksController } from './webhooks.controller';
 import { WebhooksService } from './webhooks.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ProductsModule } from '../products/products.module';
+import { MerchantCleanupModule } from '../common/merchant-cleanup.module';
 import { ShopifyTokenModule } from '../shopify-token/shopify-token.module';
 import { OrdersModule } from '../orders/orders.module';
 
@@ -17,6 +18,7 @@ import { OrdersModule } from '../orders/orders.module';
     TypeOrmModule.forFeature([Upload, Merchant, Subscription]),
     NotificationsModule,
     ProductsModule,
+    MerchantCleanupModule,
     ShopifyTokenModule,
     // Gives the webhook access to OrderFilesService so uploaded files are
     // pushed onto the Shopify order when orders/create fires.
