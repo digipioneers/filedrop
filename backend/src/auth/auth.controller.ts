@@ -22,7 +22,11 @@ export class AuthController {
    */
   @Get('install')
   install(@Query('shop') shop: string, @Res() res: any) {
-    if (!shop || !shop.endsWith('.myshopify.com')) {
+    // Strict shop validation. A loose endsWith('.myshopify.com') would accept
+    // values like "evil.com/x.myshopify.com", which — once interpolated into
+    // the OAuth URL this endpoint redirects to — becomes an open redirect to an
+    // attacker host. Only a real shop subdomain is allowed.
+    if (!shop || !/^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/.test(shop)) {
       throw new BadRequestException('Invalid shop parameter');
     }
 
@@ -66,6 +70,12 @@ export class AuthController {
   ) {
     const { shop, code, state, hmac } = query;
     this.logger.log(`[callback] received: shop=${shop} state=${state} hasCode=${!!code} hasHmac=${!!hmac}`);
+
+    // Reject malformed shop domains up front (defense-in-depth: the redirect at
+    // the end of this handler interpolates `shop`, so it must be a real shop).
+    if (!shop || !/^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/.test(shop)) {
+      throw new BadRequestException('Invalid shop parameter');
+    }
 
     // Validate state to prevent CSRF
     const storedState = this.stateStore.get(state);

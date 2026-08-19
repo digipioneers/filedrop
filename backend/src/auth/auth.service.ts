@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
@@ -36,6 +36,11 @@ export class AuthService {
    * Generate the Shopify OAuth authorization URL.
    */
   generateAuthUrl(shop: string, state: string): string {
+    // Defense-in-depth: never build an OAuth redirect URL from an untrusted
+    // shop value. Only a real shop subdomain is allowed (see auth.controller).
+    if (!shop || !/^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/.test(shop)) {
+      throw new BadRequestException('Invalid shop domain');
+    }
     const apiKey = this.configService.get('SHOPIFY_API_KEY');
     const scopes = this.configService.get('SHOPIFY_SCOPES');
     const redirectUri = `${this.configService.get('APP_URL')}/api/v1/auth/callback`;

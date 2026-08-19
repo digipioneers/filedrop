@@ -14,8 +14,10 @@ import {
   Res,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { ThrottlerGuard, Throttle } from '@nestjs/throttler';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { StorefrontService } from './storefront.service';
 import type { Response } from 'express';
@@ -25,6 +27,13 @@ import { verifyDownloadToken } from '../uploads/download-token.util';
  * Public API used by the Shopify theme extension (upload-widget.liquid).
  * No JWT required — authenticated via shop domain + HMAC or merchant token
  * embedded in the widget's initialization script.
+ *
+ * Because these routes are public and unauthenticated, the write endpoints
+ * (upload/delete) are rate-limited per IP (ThrottlerGuard) to prevent abuse —
+ * flooding the upload endpoint would otherwise let anyone exhaust a merchant's
+ * storage/plan limits and drive up cost. The read endpoints are intentionally
+ * left un-throttled: they're hit on every storefront page load and carry no
+ * cost/abuse risk, so throttling them could 429 legitimate shoppers.
  */
 @ApiTags('Storefront (Public)')
 @Controller('storefront')
@@ -83,7 +92,15 @@ export class StorefrontController {
    * merchantId embedded in the widget identifies which store this belongs to.
    */
   @Post('upload')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 2 * 1024 * 1024 * 1024 } }))
+  @UseGuards(ThrottlerGuard)
+  // Per-IP cap on the public upload endpoint: 5/sec and 30/min. Generous for a
+  // real shopper (who uploads a handful of files) but stops flooding/abuse.
+  @Throttle({ short: { limit: 5, ttl: 1000 }, long: { limit: 30, ttl: 60000 } })
+  // Hard ingress cap of 100MB per file. Multer buffers the upload in memory and
+  // plan/field size checks only run afterwards, so this is the real ceiling —
+  // it must be a sane fixed limit, not multi-gigabyte, to avoid memory-pressure
+  // DoS. (Per-merchant/plan limits are enforced in the service on top of this.)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 100 * 1024 * 1024 } }))
   @ApiOperation({ summary: 'Customer file upload (public)' })
   async uploadFile(
     @UploadedFile() file: any,
@@ -120,6 +137,8 @@ export class StorefrontController {
    */
   @HttpCode(HttpStatus.NO_CONTENT)
   @Delete('upload/:uploadId')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ short: { limit: 5, ttl: 1000 }, long: { limit: 30, ttl: 60000 } })
   @ApiOperation({ summary: 'Customer removes their upload (public)' })
   removeUpload(
     @Param('uploadId') uploadId: string,

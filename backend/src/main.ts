@@ -15,6 +15,13 @@ async function bootstrap() {
     logger: ['error', 'warn', 'log'],
   });
 
+  // Behind Railway's (single) reverse proxy. Trusting exactly one proxy hop
+  // makes req.ip resolve to the real client IP from X-Forwarded-For — required
+  // for per-IP rate limiting to work per shopper rather than collapsing every
+  // request onto the proxy's IP. Trusting only 1 hop also prevents a client
+  // from spoofing X-Forwarded-For to evade the limit.
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+
   app.use((req: any, res: any, next: any) => {
     // Required for Shopify embedded apps - allow Shopify admin to load this in an iframe
     res.removeHeader('X-Frame-Options');

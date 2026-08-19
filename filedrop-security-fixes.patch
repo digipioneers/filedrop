@@ -1,0 +1,125 @@
+diff --git a/backend/src/auth/auth.controller.ts b/backend/src/auth/auth.controller.ts
+index 97f445b..95e9b59 100644
+--- a/backend/src/auth/auth.controller.ts
++++ b/backend/src/auth/auth.controller.ts
+@@ -22,7 +22,11 @@ export class AuthController {
+    */
+   @Get('install')
+   install(@Query('shop') shop: string, @Res() res: any) {
+-    if (!shop || !shop.endsWith('.myshopify.com')) {
++    // Strict shop validation. A loose endsWith('.myshopify.com') would accept
++    // values like "evil.com/x.myshopify.com", which — once interpolated into
++    // the OAuth URL this endpoint redirects to — becomes an open redirect to an
++    // attacker host. Only a real shop subdomain is allowed.
++    if (!shop || !/^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/.test(shop)) {
+       throw new BadRequestException('Invalid shop parameter');
+     }
+ 
+@@ -67,6 +71,12 @@ export class AuthController {
+     const { shop, code, state, hmac } = query;
+     this.logger.log(`[callback] received: shop=${shop} state=${state} hasCode=${!!code} hasHmac=${!!hmac}`);
+ 
++    // Reject malformed shop domains up front (defense-in-depth: the redirect at
++    // the end of this handler interpolates `shop`, so it must be a real shop).
++    if (!shop || !/^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/.test(shop)) {
++      throw new BadRequestException('Invalid shop parameter');
++    }
++
+     // Validate state to prevent CSRF
+     const storedState = this.stateStore.get(state);
+     if (!storedState || storedState.shop !== shop || storedState.expiresAt < Date.now()) {
+diff --git a/backend/src/auth/auth.service.ts b/backend/src/auth/auth.service.ts
+index 2d8ea1e..e6dcacb 100644
+--- a/backend/src/auth/auth.service.ts
++++ b/backend/src/auth/auth.service.ts
+@@ -1,4 +1,4 @@
+-import { Injectable, Logger } from '@nestjs/common';
++import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+ import { InjectRepository } from '@nestjs/typeorm';
+ import { Repository } from 'typeorm';
+ import { JwtService } from '@nestjs/jwt';
+@@ -36,6 +36,11 @@ export class AuthService {
+    * Generate the Shopify OAuth authorization URL.
+    */
+   generateAuthUrl(shop: string, state: string): string {
++    // Defense-in-depth: never build an OAuth redirect URL from an untrusted
++    // shop value. Only a real shop subdomain is allowed (see auth.controller).
++    if (!shop || !/^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/.test(shop)) {
++      throw new BadRequestException('Invalid shop domain');
++    }
+     const apiKey = this.configService.get('SHOPIFY_API_KEY');
+     const scopes = this.configService.get('SHOPIFY_SCOPES');
+     const redirectUri = `${this.configService.get('APP_URL')}/api/v1/auth/callback`;
+diff --git a/backend/src/main.ts b/backend/src/main.ts
+index 904afb9..29089c0 100644
+--- a/backend/src/main.ts
++++ b/backend/src/main.ts
+@@ -15,6 +15,13 @@ async function bootstrap() {
+     logger: ['error', 'warn', 'log'],
+   });
+ 
++  // Behind Railway's (single) reverse proxy. Trusting exactly one proxy hop
++  // makes req.ip resolve to the real client IP from X-Forwarded-For — required
++  // for per-IP rate limiting to work per shopper rather than collapsing every
++  // request onto the proxy's IP. Trusting only 1 hop also prevents a client
++  // from spoofing X-Forwarded-For to evade the limit.
++  app.getHttpAdapter().getInstance().set('trust proxy', 1);
++
+   app.use((req: any, res: any, next: any) => {
+     // Required for Shopify embedded apps - allow Shopify admin to load this in an iframe
+     res.removeHeader('X-Frame-Options');
+diff --git a/backend/src/storefront/storefront.controller.ts b/backend/src/storefront/storefront.controller.ts
+index 049eda4..8dffe72 100644
+--- a/backend/src/storefront/storefront.controller.ts
++++ b/backend/src/storefront/storefront.controller.ts
+@@ -14,8 +14,10 @@ import {
+   Res,
+   HttpCode,
+   HttpStatus,
++  UseGuards,
+ } from '@nestjs/common';
+ import { FileInterceptor } from '@nestjs/platform-express';
++import { ThrottlerGuard, Throttle } from '@nestjs/throttler';
+ import { ApiTags, ApiOperation } from '@nestjs/swagger';
+ import { StorefrontService } from './storefront.service';
+ import type { Response } from 'express';
+@@ -25,6 +27,13 @@ import { verifyDownloadToken } from '../uploads/download-token.util';
+  * Public API used by the Shopify theme extension (upload-widget.liquid).
+  * No JWT required — authenticated via shop domain + HMAC or merchant token
+  * embedded in the widget's initialization script.
++ *
++ * Because these routes are public and unauthenticated, the write endpoints
++ * (upload/delete) are rate-limited per IP (ThrottlerGuard) to prevent abuse —
++ * flooding the upload endpoint would otherwise let anyone exhaust a merchant's
++ * storage/plan limits and drive up cost. The read endpoints are intentionally
++ * left un-throttled: they're hit on every storefront page load and carry no
++ * cost/abuse risk, so throttling them could 429 legitimate shoppers.
+  */
+ @ApiTags('Storefront (Public)')
+ @Controller('storefront')
+@@ -83,7 +92,15 @@ export class StorefrontController {
+    * merchantId embedded in the widget identifies which store this belongs to.
+    */
+   @Post('upload')
+-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 2 * 1024 * 1024 * 1024 } }))
++  @UseGuards(ThrottlerGuard)
++  // Per-IP cap on the public upload endpoint: 5/sec and 30/min. Generous for a
++  // real shopper (who uploads a handful of files) but stops flooding/abuse.
++  @Throttle({ short: { limit: 5, ttl: 1000 }, long: { limit: 30, ttl: 60000 } })
++  // Hard ingress cap of 100MB per file. Multer buffers the upload in memory and
++  // plan/field size checks only run afterwards, so this is the real ceiling —
++  // it must be a sane fixed limit, not multi-gigabyte, to avoid memory-pressure
++  // DoS. (Per-merchant/plan limits are enforced in the service on top of this.)
++  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 100 * 1024 * 1024 } }))
+   @ApiOperation({ summary: 'Customer file upload (public)' })
+   async uploadFile(
+     @UploadedFile() file: any,
+@@ -120,6 +137,8 @@ export class StorefrontController {
+    */
+   @HttpCode(HttpStatus.NO_CONTENT)
+   @Delete('upload/:uploadId')
++  @UseGuards(ThrottlerGuard)
++  @Throttle({ short: { limit: 5, ttl: 1000 }, long: { limit: 30, ttl: 60000 } })
+   @ApiOperation({ summary: 'Customer removes their upload (public)' })
+   removeUpload(
+     @Param('uploadId') uploadId: string,
