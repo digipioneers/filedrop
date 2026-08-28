@@ -1,0 +1,43 @@
+diff --git a/backend/src/storefront/storefront.service.ts b/backend/src/storefront/storefront.service.ts
+index 838616e..6848fbc 100644
+--- a/backend/src/storefront/storefront.service.ts
++++ b/backend/src/storefront/storefront.service.ts
+@@ -51,6 +51,17 @@ export class StorefrontService {
+     const merchant = await this.merchantRepo.findOne({ where: { id: merchantId, isActive: true } });
+     if (!merchant) throw new NotFoundException('Store not found');
+ 
++    // The first time the widget fetches its fields, the Filedrop theme block is
++    // actually rendering on the storefront (or in the theme-editor preview) —
++    // i.e. the merchant has completed "Add the Filedrop block to your theme".
++    // Record it once so that onboarding step reflects reality instead of being
++    // ticked by default. Fire-and-forget so it never slows the storefront.
++    if (!merchant.storefrontActivatedAt) {
++      void this.merchantRepo
++        .update({ id: merchant.id }, { storefrontActivatedAt: new Date() })
++        .catch(() => undefined);
++    }
++
+     const fields = await this.fieldRepo.find({
+       where: { merchantId, isActive: true },
+       order: { sortOrder: 'ASC' },
+diff --git a/frontend/src/pages/DashboardPage.tsx b/frontend/src/pages/DashboardPage.tsx
+index 4e87c06..ec55876 100644
+--- a/frontend/src/pages/DashboardPage.tsx
++++ b/frontend/src/pages/DashboardPage.tsx
+@@ -141,6 +141,7 @@ export function DashboardPage() {
+   }
+ 
+   // Derive setup progress from real data.
++  const themeBlockAdded = stats?.themeBlockAdded ?? false;
+   const hasFields = (stats?.activeFields ?? 0) > 0;
+   const hasUploads = (stats?.totalUploads ?? 0) > 0;
+ 
+@@ -166,7 +167,7 @@ export function DashboardPage() {
+                   paddingBlockStart="200"
+                 >
+                   <ChecklistStep
+-                    done={true}
++                    done={themeBlockAdded}
+                     title="Add the Filedrop block to your theme"
+                     description="Open the theme editor and drop the Filedrop upload block onto your product or cart page to finish installation."
+                     actionLabel="Go to theme editor"

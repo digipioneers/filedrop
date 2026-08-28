@@ -51,6 +51,17 @@ export class StorefrontService {
     const merchant = await this.merchantRepo.findOne({ where: { id: merchantId, isActive: true } });
     if (!merchant) throw new NotFoundException('Store not found');
 
+    // The first time the widget fetches its fields, the Filedrop theme block is
+    // actually rendering on the storefront (or in the theme-editor preview) —
+    // i.e. the merchant has completed "Add the Filedrop block to your theme".
+    // Record it once so that onboarding step reflects reality instead of being
+    // ticked by default. Fire-and-forget so it never slows the storefront.
+    if (!merchant.storefrontActivatedAt) {
+      void this.merchantRepo
+        .update({ id: merchant.id }, { storefrontActivatedAt: new Date() })
+        .catch(() => undefined);
+    }
+
     const fields = await this.fieldRepo.find({
       where: { merchantId, isActive: true },
       order: { sortOrder: 'ASC' },

@@ -141,6 +141,7 @@ export function DashboardPage() {
   }
 
   // Derive setup progress from real data.
+  const themeBlockAdded = stats?.themeBlockAdded ?? false;
   const hasFields = (stats?.activeFields ?? 0) > 0;
   const hasUploads = (stats?.totalUploads ?? 0) > 0;
 
@@ -166,7 +167,7 @@ export function DashboardPage() {
                   paddingBlockStart="200"
                 >
                   <ChecklistStep
-                    done={true}
+                    done={themeBlockAdded}
                     title="Add the Filedrop block to your theme"
                     description="Open the theme editor and drop the Filedrop upload block onto your product or cart page to finish installation."
                     actionLabel="Go to theme editor"
