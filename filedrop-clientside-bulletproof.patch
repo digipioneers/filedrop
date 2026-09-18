@@ -1,0 +1,323 @@
+diff --git a/backend/src/storefront/storefront.service.ts b/backend/src/storefront/storefront.service.ts
+index 6848fbc..8a90ca8 100644
+--- a/backend/src/storefront/storefront.service.ts
++++ b/backend/src/storefront/storefront.service.ts
+@@ -36,14 +36,36 @@ export class StorefrontService {
+   ) {}
+ 
+   async resolveMerchantId(shopDomainOrMerchantId: string): Promise<string> {
+-    // Callers may pass either the Shopify shop domain (from the widget) or
+-    // an actual merchant UUID (from internal/back-office calls). Try shop
+-    // domain first since that's what the storefront widget sends.
+-    const byShop = await this.merchantRepo.findOne({
+-      where: { shopDomain: shopDomainOrMerchantId, isActive: true },
+-    });
+-    if (byShop) return byShop.id;
+-    return shopDomainOrMerchantId;
++    // Callers may pass either the Shopify shop domain (from the widget) or an
++    // actual merchant UUID (internal calls). Try shop domain first since that's
++    // what the storefront widget sends.
++    const raw = (shopDomainOrMerchantId || '').trim();
++
++    // Normalize: strip protocol, a leading "www.", any path, and lower-case —
++    // guards against a theme/widget sending a URL-ish or mixed-case value.
++    const normalized = raw
++      .replace(/^https?:\/\//i, '')
++      .replace(/\/.*$/, '')
++      .replace(/^www\./i, '')
++      .toLowerCase();
++
++    const candidates = Array.from(new Set([raw, normalized])).filter(Boolean);
++    for (const shopDomain of candidates) {
++      const byShop = await this.merchantRepo.findOne({
++        where: { shopDomain, isActive: true },
++      });
++      if (byShop) return byShop.id;
++    }
++
++    // Bare store handle (e.g. "store5" with no ".myshopify.com") — try canonical.
++    if (normalized && !normalized.includes('.')) {
++      const byPermanent = await this.merchantRepo.findOne({
++        where: { shopDomain: `${normalized}.myshopify.com`, isActive: true },
++      });
++      if (byPermanent) return byPermanent.id;
++    }
++
++    return raw;
+   }
+ 
+   async getFieldsForProduct(shopOrMerchantId: string, productId?: string, variantId?: string, tags: string[] = []) {
+diff --git a/extensions/theme-extension/blocks/upload-widget.liquid b/extensions/theme-extension/blocks/upload-widget.liquid
+index 8b63e84..ebac2e1 100644
+--- a/extensions/theme-extension/blocks/upload-widget.liquid
++++ b/extensions/theme-extension/blocks/upload-widget.liquid
+@@ -6,7 +6,7 @@
+ <div
+   id="cfup-upload-widget"
+   class="cfup-widget"
+-  data-shop="{{ shop.domain }}"
++  data-shop="{{ shop.permanent_domain }}"
+   data-product-id="{{ product.id }}"
+   data-variant-id="{{ product.selected_or_first_available_variant.id }}"
+   data-product-image="{{ product.selected_or_first_available_variant.featured_image | default: product.featured_image | image_url: width: 1600 }}"
+@@ -15,6 +15,8 @@
+   data-button-text="{{ block.settings.button_text }}"
+   data-border-radius="{{ block.settings.border_radius }}"
+   data-enable-camera="{{ block.settings.enable_camera }}"
++  data-cart-url="{{ routes.cart_url }}"
++  data-cart-update-url="{{ routes.cart_update_url }}"
+ >
+   <div id="cfup-fields-container"></div>
+ </div>
+@@ -90,9 +92,9 @@
+ 
+ 
+ 
+-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.css" />
+-<script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.js" defer></script>
+-<script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js" defer></script>
++<!-- Cropper.js and Fabric.js are loaded on demand (see loadScriptOnce) only when
++     the optional image editor/designer is opened, so they no longer download on
++     every storefront page load. -->
+ 
+ <style>
+   :root {
+@@ -305,6 +307,12 @@
+   const widget = document.getElementById('cfup-upload-widget');
+   if (!widget) return;
+ 
++  // Guard against the block being initialized more than once on a page
++  // (duplicate placement, or a theme re-rendering the section) — otherwise the
++  // script would double-bind listeners and append duplicate fields.
++  if (widget.dataset.cfupInit === '1') return;
++  widget.dataset.cfupInit = '1';
++
+   const SHOP         = widget.dataset.shop;
+   const PRODUCT_ID   = widget.dataset.productId;
+   let   PRODUCT_IMAGE = widget.dataset.productImage || '';
+@@ -314,6 +322,69 @@
+   const ENABLE_CAMERA = widget.dataset.enableCamera === 'true';
+   const container    = document.getElementById('cfup-fields-container');
+ 
++  // Shopify cart routes, resolved by Liquid so they carry any subfolder/locale
++  // prefix (e.g. "/en/cart", or "/app/cart" on a subfolder storefront). Using
++  // these instead of hard-coded "/cart.js" keeps cart-token binding and
++  // line-item properties working on custom-domain AND subfolder setups. The
++  // "/cart" fallbacks cover any theme that doesn't expose routes.
++  const CART_BASE        = widget.dataset.cartUrl || '/cart';
++  const CART_UPDATE_BASE = widget.dataset.cartUpdateUrl || '/cart/update';
++  const CART_JS_URL      = CART_BASE + '.js';
++  const CART_UPDATE_URL  = CART_UPDATE_BASE + '.js';
++
++  // Fail loudly in the console instead of silently rendering nothing — these
++  // are the two most common "the widget doesn't show up" causes.
++  if (!API_URL) {
++    console.error('[Filedrop] No App API URL is set on the Filedrop block. Open the theme editor, select the Filedrop block, and set "App API URL". The widget cannot load without it.');
++    return;
++  }
++  if (!SHOP) {
++    console.error('[Filedrop] Could not determine the shop domain. The widget cannot load.');
++    return;
++  }
++
++  // ── Lazy-load heavy image libraries only when actually needed ─────────────
++  // Cropper.js and Fabric.js power the OPTIONAL image editor/designer. Loading
++  // them on every product page (for every shopper) slowed the storefront for no
++  // reason, so they're fetched on first use. Each loader resolves true when the
++  // library is ready, false if the CDN is blocked/offline — callers then fall
++  // back gracefully (upload the original file) instead of breaking.
++  const CROPPER_JS  = 'https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.js';
++  const CROPPER_CSS = 'https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.css';
++  const FABRIC_JS   = 'https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js';
++  const _scriptCache = {};
++  function loadScriptOnce(src) {
++    if (_scriptCache[src]) return _scriptCache[src];
++    _scriptCache[src] = new Promise((resolve, reject) => {
++      const s = document.createElement('script');
++      s.src = src;
++      s.async = true;
++      s.onload = () => resolve(true);
++      s.onerror = () => { delete _scriptCache[src]; reject(new Error('load failed: ' + src)); };
++      document.head.appendChild(s);
++    });
++    return _scriptCache[src];
++  }
++  function ensureCss(href) {
++    if (document.querySelector('link[data-cfup-css="' + href + '"]')) return;
++    const l = document.createElement('link');
++    l.rel = 'stylesheet';
++    l.href = href;
++    l.setAttribute('data-cfup-css', href);
++    document.head.appendChild(l);
++  }
++  async function ensureCropper() {
++    if (window.Cropper) return true;
++    ensureCss(CROPPER_CSS);
++    try { await loadScriptOnce(CROPPER_JS); return !!window.Cropper; }
++    catch (e) { console.error('[Filedrop] Image editor library failed to load.', e); return false; }
++  }
++  async function ensureFabric() {
++    if (window.fabric) return true;
++    try { await loadScriptOnce(FABRIC_JS); return !!window.fabric; }
++    catch (e) { console.error('[Filedrop] Image designer library failed to load.', e); return false; }
++  }
++
+   widget.style.setProperty('--cfup-btn-color', BTN_COLOR);
+ 
+   let allUploadedIds = [];
+@@ -342,7 +413,7 @@
+     if (!allUploadedIds.length) return;
+     const oldToken = _cachedCartToken;
+     try {
+-      const res = await fetch('/cart.js', { credentials: 'same-origin', cache: 'no-store' });
++      const res = await fetch(CART_JS_URL, { credentials: 'same-origin', cache: 'no-store' });
+       if (!res.ok) return;
+       const cart = await res.json();
+       const freshToken = cart && cart.token ? String(cart.token).split('?')[0] : null;
+@@ -472,10 +543,19 @@
+   const modal      = document.getElementById('cfup-editor-modal');
+   const editorImg  = document.getElementById('cfup-editor-img');
+ 
+-  function openEditor(file, onDone) {
++  async function openEditor(file, onDone) {
++    // Load Cropper on demand. If it can't load (CDN blocked/offline), skip the
++    // editor and upload the original file rather than trapping the customer.
++    const ready = await ensureCropper();
++    if (!ready) {
++      console.warn('[Filedrop] Image editor unavailable — using the original image.');
++      onDone(file);
++      return;
++    }
+     pendingEditorCallback = onDone;
+     const url = URL.createObjectURL(file);
+     editorImg.src = url;
++    editorImg.dataset.objurl = url;
+     modal.style.display = 'flex';
+ 
+     // Small delay so img loads before Cropper reads dimensions
+@@ -493,9 +573,17 @@
+     }, 100);
+   }
+ 
++  function _revokeEditorUrl() {
++    if (editorImg.dataset.objurl) {
++      URL.revokeObjectURL(editorImg.dataset.objurl);
++      delete editorImg.dataset.objurl;
++    }
++  }
++
+   document.getElementById('cfup-editor-close').addEventListener('click', () => {
+     modal.style.display = 'none';
+     if (cropper) { cropper.destroy(); cropper = null; }
++    _revokeEditorUrl();
+     pendingEditorCallback = null;
+   });
+ 
+@@ -511,6 +599,7 @@
+       modal.style.display = 'none';
+       cropper.destroy();
+       cropper = null;
++      _revokeEditorUrl();
+       const editedFile = new File([blob], 'edited-image.jpg', { type: 'image/jpeg' });
+       pendingEditorCallback(editedFile);
+       pendingEditorCallback = null;
+@@ -609,7 +698,15 @@
+       (active && active.type === 'textbox') ? 'inline-block' : 'none';
+   }
+ 
+-  function openDesigner(templateUrl, initialPlacement, file, opts, onConfirm) {
++  async function openDesigner(templateUrl, initialPlacement, file, opts, onConfirm) {
++    // Load Fabric on demand. If it can't load (CDN blocked/offline), skip the
++    // designer and upload the original file rather than showing a broken modal.
++    const ready = await ensureFabric();
++    if (!ready) {
++      console.warn('[Filedrop] Image designer unavailable — using the original image.');
++      onConfirm(file);
++      return;
++    }
+     pendingDesignerCallback = onConfirm;
+     const modal = document.getElementById('cfup-designer-modal');
+     modal.style.display = 'flex';
+@@ -845,9 +942,20 @@
+       if (variantId) url.searchParams.set('variantId', variantId);
+ 
+       const res = await fetch(url.toString());
+-      if (!res.ok) return;
++      if (!res.ok) {
++        // A 404 here almost always means the backend couldn't match this store
++        // (e.g. the widget sent a domain the merchant isn't registered under).
++        console.error(
++          `[Filedrop] Could not load upload fields (HTTP ${res.status}) for shop "${SHOP}". ` +
++          `If this is a live store, confirm the app is installed on it and the shop domain matches.`,
++        );
++        return;
++      }
+       const json = await res.json();
+       const fields = json.data || [];
++      if (!fields.length) {
++        console.info('[Filedrop] No active upload fields are assigned to this product. Create a field (or assign one store-wide) in the Filedrop admin.');
++      }
+       fields.forEach((field) => container.appendChild(buildField(field)));
+     } catch (e) {
+       console.error('[CFUP] Failed to load upload fields:', e);
+@@ -1157,12 +1265,20 @@
+               syncLineItemProperties();
+               resolve(res);
+             } else {
+-              try {
+-                const err = JSON.parse(xhr.responseText);
+-                reject(new Error(err.message || 'Upload failed'));
+-              } catch {
+-                reject(new Error('Upload failed'));
++              let msg = 'Upload failed. Please try again.';
++              if (xhr.status === 413) {
++                msg = 'This file is too large to upload.';
++              } else if (xhr.status === 429) {
++                msg = 'Too many uploads in a short time. Please wait a moment and try again.';
++              } else {
++                try {
++                  const err = JSON.parse(xhr.responseText);
++                  if (err && err.message) {
++                    msg = Array.isArray(err.message) ? err.message.join(', ') : err.message;
++                  }
++                } catch { /* non-JSON error body — keep the generic message */ }
+               }
++              reject(new Error(msg));
+             }
+           };
+           xhr.onerror = () => reject(new Error('Network error'));
+@@ -1217,6 +1333,7 @@
+       const img = document.createElement('img');
+       img.className = 'cfup-file-preview';
+       img.src = URL.createObjectURL(file);
++      img.onload = () => URL.revokeObjectURL(img.src);
+       item.appendChild(img);
+     } else {
+       const icon = document.createElement('span');
+@@ -1286,7 +1403,7 @@
+   async function getCartToken() {
+     if (_cachedCartToken) return _cachedCartToken;
+     try {
+-      const res = await fetch('/cart/update.js', {
++      const res = await fetch(CART_UPDATE_URL, {
+         method: 'POST',
+         credentials: 'same-origin',
+         cache: 'no-store',
+@@ -1308,7 +1425,7 @@
+     // theme customization or cart-mutation restriction. Better than
+     // nothing, though it carries the provisional-token risk described above.
+     try {
+-      const res = await fetch('/cart.js', { credentials: 'same-origin', cache: 'no-store' });
++      const res = await fetch(CART_JS_URL, { credentials: 'same-origin', cache: 'no-store' });
+       if (res.ok) {
+         const cart = await res.json();
+         if (cart && cart.token) {
+@@ -1332,7 +1449,7 @@
+ 
+   function persistUploadIds() {
+     if (!allUploadedIds.length) return;
+-    fetch('/cart/update.js', {
++    fetch(CART_UPDATE_URL, {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+       body: JSON.stringify({

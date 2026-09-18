@@ -36,14 +36,36 @@ export class StorefrontService {
   ) {}
 
   async resolveMerchantId(shopDomainOrMerchantId: string): Promise<string> {
-    // Callers may pass either the Shopify shop domain (from the widget) or
-    // an actual merchant UUID (from internal/back-office calls). Try shop
-    // domain first since that's what the storefront widget sends.
-    const byShop = await this.merchantRepo.findOne({
-      where: { shopDomain: shopDomainOrMerchantId, isActive: true },
-    });
-    if (byShop) return byShop.id;
-    return shopDomainOrMerchantId;
+    // Callers may pass either the Shopify shop domain (from the widget) or an
+    // actual merchant UUID (internal calls). Try shop domain first since that's
+    // what the storefront widget sends.
+    const raw = (shopDomainOrMerchantId || '').trim();
+
+    // Normalize: strip protocol, a leading "www.", any path, and lower-case —
+    // guards against a theme/widget sending a URL-ish or mixed-case value.
+    const normalized = raw
+      .replace(/^https?:\/\//i, '')
+      .replace(/\/.*$/, '')
+      .replace(/^www\./i, '')
+      .toLowerCase();
+
+    const candidates = Array.from(new Set([raw, normalized])).filter(Boolean);
+    for (const shopDomain of candidates) {
+      const byShop = await this.merchantRepo.findOne({
+        where: { shopDomain, isActive: true },
+      });
+      if (byShop) return byShop.id;
+    }
+
+    // Bare store handle (e.g. "store5" with no ".myshopify.com") — try canonical.
+    if (normalized && !normalized.includes('.')) {
+      const byPermanent = await this.merchantRepo.findOne({
+        where: { shopDomain: `${normalized}.myshopify.com`, isActive: true },
+      });
+      if (byPermanent) return byPermanent.id;
+    }
+
+    return raw;
   }
 
   async getFieldsForProduct(shopOrMerchantId: string, productId?: string, variantId?: string, tags: string[] = []) {
