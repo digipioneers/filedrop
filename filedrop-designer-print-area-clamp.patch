@@ -1,0 +1,116 @@
+diff --git a/extensions/theme-extension/blocks/upload-widget.liquid b/extensions/theme-extension/blocks/upload-widget.liquid
+index ebac2e1..4cbcbe1 100644
+--- a/extensions/theme-extension/blocks/upload-widget.liquid
++++ b/extensions/theme-extension/blocks/upload-widget.liquid
+@@ -689,6 +689,34 @@
+ 
+   let designerCanvas = null;
+   let pendingDesignerCallback = null;
++  let designerAreaRect = null;
++  let designerPrintArea = null;
++
++  // Keep an object (image or text) fully inside the designated print area:
++  // shrink it to fit if it's larger, then nudge it back inside the bounds.
++  // This is what enforces "the uploaded image/text must remain within the
++  // customization area".
++  function constrainToArea(obj) {
++    if (!obj || obj === designerAreaRect || !designerPrintArea || !designerCanvas) return;
++    const area = designerPrintArea;
++    obj.setCoords();
++    let b = obj.getBoundingRect(true);
++    const cap = Math.min(area.width / b.width, area.height / b.height, 1);
++    if (cap < 1) {
++      obj.scaleX *= cap;
++      obj.scaleY *= cap;
++      obj.setCoords();
++      b = obj.getBoundingRect(true);
++    }
++    let left = obj.left, top = obj.top;
++    if (b.left < area.left) left += area.left - b.left;
++    if (b.top < area.top) top += area.top - b.top;
++    if (b.left + b.width > area.left + area.width) left += (area.left + area.width) - (b.left + b.width);
++    if (b.top + b.height > area.top + area.height) top += (area.top + area.height) - (b.top + b.height);
++    obj.left = left;
++    obj.top = top;
++    obj.setCoords();
++  }
+ 
+   function updateDesignerToolbar() {
+     if (!designerCanvas) return;
+@@ -726,6 +754,37 @@
+       if (designerCanvas) { designerCanvas.dispose(); }
+       designerCanvas = new fabric.Canvas('cfup-designer-canvas', { width: canvasW, height: canvasH });
+ 
++      // Compute the designated print area (in canvas pixels) and draw a dashed
++      // outline so the customer can see where their design will print — and so
++      // we can clamp their art/text inside it (like Spreadshirt's print area).
++      const pa = initialPlacement || { x: 25, y: 25, width: 50, height: 50 };
++      designerPrintArea = {
++        left: (pa.x / 100) * canvasW,
++        top: (pa.y / 100) * canvasH,
++        width: (pa.width / 100) * canvasW,
++        height: (pa.height / 100) * canvasH,
++      };
++      designerAreaRect = new fabric.Rect({
++        left: designerPrintArea.left,
++        top: designerPrintArea.top,
++        width: designerPrintArea.width,
++        height: designerPrintArea.height,
++        fill: 'transparent',
++        stroke: '#008060',
++        strokeDashArray: [6, 4],
++        strokeWidth: 1.5,
++        selectable: false,
++        evented: false,
++        excludeFromExport: true,
++      });
++      designerCanvas.add(designerAreaRect);
++
++      // Clamp any drag/resize/rotate back inside the print area, live.
++      designerCanvas.on('object:moving', (e) => constrainToArea(e.target));
++      designerCanvas.on('object:scaling', (e) => constrainToArea(e.target));
++      designerCanvas.on('object:rotating', (e) => constrainToArea(e.target));
++      designerCanvas.on('object:modified', (e) => { constrainToArea(e.target); designerCanvas.renderAll(); });
++
+       fabric.Image.fromURL(templateUrl, (bgImg) => {
+         bgImg.scaleToWidth(canvasW);
+         designerCanvas.setBackgroundImage(bgImg, designerCanvas.renderAll.bind(designerCanvas));
+@@ -749,6 +808,7 @@
+             borderColor: '#008060',
+           });
+           designerCanvas.add(img);
++          constrainToArea(img);
+           designerCanvas.setActiveObject(img);
+           designerCanvas.renderAll();
+           URL.revokeObjectURL(fileUrl);
+@@ -780,9 +840,12 @@
+ 
+   document.getElementById('cfup-designer-add-text').addEventListener('click', () => {
+     if (!designerCanvas) return;
++    const cx = designerPrintArea ? (designerPrintArea.left + designerPrintArea.width / 2) : (designerCanvas.width / 2);
++    const cy = designerPrintArea ? (designerPrintArea.top + designerPrintArea.height / 2) : (designerCanvas.height / 2);
+     const text = new fabric.Textbox('Your text here', {
+-      left: designerCanvas.width / 2 - 70,
+-      top: designerCanvas.height / 2 - 15,
++      left: cx - 70,
++      top: cy - 15,
++      width: Math.min(160, designerPrintArea ? designerPrintArea.width : 160),
+       fontSize: 28,
+       fill: '#000000',
+       fontFamily: 'Arial, sans-serif',
+@@ -790,6 +853,7 @@
+       borderColor: '#008060',
+     });
+     designerCanvas.add(text);
++    constrainToArea(text);
+     designerCanvas.setActiveObject(text);
+     designerCanvas.renderAll();
+     updateDesignerToolbar();
+@@ -816,6 +880,7 @@
+   document.getElementById('cfup-designer-confirm').addEventListener('click', () => {
+     if (!designerCanvas || !pendingDesignerCallback) return;
+     designerCanvas.discardActiveObject();
++    if (designerAreaRect) { designerCanvas.remove(designerAreaRect); designerAreaRect = null; }
+     designerCanvas.renderAll();
+     designerCanvas.getElement().toBlob((blob) => {
+       document.getElementById('cfup-designer-modal').style.display = 'none';
