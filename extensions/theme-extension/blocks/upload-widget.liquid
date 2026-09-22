@@ -689,6 +689,7 @@
 
   let designerCanvas = null;
   let pendingDesignerCallback = null;
+  let pendingDesignerFile = null;
   let designerAreaRect = null;
   let designerPrintArea = null;
 
@@ -736,6 +737,7 @@
       return;
     }
     pendingDesignerCallback = onConfirm;
+    pendingDesignerFile = file;
     const modal = document.getElementById('cfup-designer-modal');
     modal.style.display = 'flex';
 
@@ -786,6 +788,7 @@
       designerCanvas.on('object:modified', (e) => { constrainToArea(e.target); designerCanvas.renderAll(); });
 
       fabric.Image.fromURL(templateUrl, (bgImg) => {
+        if (!bgImg) return; // image blocked/failed — continue without a backdrop
         bgImg.scaleToWidth(canvasW);
         designerCanvas.setBackgroundImage(bgImg, designerCanvas.renderAll.bind(designerCanvas));
       }, { crossOrigin: 'anonymous' });
@@ -820,6 +823,19 @@
       designerCanvas.on('selection:cleared', updateDesignerToolbar);
 
       document.getElementById('cfup-designer-add-text').style.display = opts.allowText ? 'inline-block' : 'none';
+    };
+    templateImg.onerror = () => {
+      // Base image (product photo or merchant mockup) failed to load — most
+      // often a missing-CORS mockup. Don't trap the customer in a blank
+      // designer; close it and upload their original file so add-to-cart works.
+      console.warn('[Filedrop] Designer base image failed to load — uploading the original file.');
+      const dm = document.getElementById('cfup-designer-modal');
+      if (dm) dm.style.display = 'none';
+      const cb = pendingDesignerCallback;
+      const orig = pendingDesignerFile;
+      pendingDesignerCallback = null;
+      pendingDesignerFile = null;
+      if (cb) cb(orig || file);
     };
     templateImg.src = templateUrl;
   }
@@ -882,13 +898,29 @@
     designerCanvas.discardActiveObject();
     if (designerAreaRect) { designerCanvas.remove(designerAreaRect); designerAreaRect = null; }
     designerCanvas.renderAll();
-    designerCanvas.getElement().toBlob((blob) => {
+    const finish = (fileToUpload) => {
       document.getElementById('cfup-designer-modal').style.display = 'none';
-      const designedFile = new File([blob], 'custom-design.png', { type: 'image/png' });
       const cb = pendingDesignerCallback;
+      const orig = pendingDesignerFile;
       pendingDesignerCallback = null;
-      cb(designedFile);
-    }, 'image/png');
+      pendingDesignerFile = null;
+      cb(fileToUpload || orig);
+    };
+    try {
+      designerCanvas.getElement().toBlob((blob) => {
+        if (!blob) {
+          console.warn('[Filedrop] Could not render the design — uploading the original file instead.');
+          finish(null);
+          return;
+        }
+        finish(new File([blob], 'custom-design.png', { type: 'image/png' }));
+      }, 'image/png');
+    } catch (e) {
+      // Tainted-canvas SecurityError (base image served without CORS headers) —
+      // upload the customer's original file so they're never stuck.
+      console.warn('[Filedrop] Design export failed (likely a CORS-tainted image) — uploading the original file.', e);
+      finish(null);
+    }
   });
 
   // ── Fetch fields ─────────────────────────────────────────────────────────
@@ -1316,7 +1348,10 @@
         await new Promise((resolve, reject) => {
           xhr.onload = () => {
             if (xhr.status >= 200 && xhr.status < 300) {
-              const res = JSON.parse(xhr.responseText);
+              let res;
+              try { res = JSON.parse(xhr.responseText); }
+              catch { reject(new Error('Upload failed. Please try again.')); return; }
+              if (!res || !res.data) { reject(new Error('Upload failed. Please try again.')); return; }
               uploadedFiles.push(res.data);
               uploadedFileIds.push(res.data.id);
               allUploadedIds.push(res.data.id);
