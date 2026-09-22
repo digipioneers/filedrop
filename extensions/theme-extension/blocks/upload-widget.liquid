@@ -613,6 +613,50 @@
   let pendingPreviewCallback = null;
   let pendingPreviewFile = null;
 
+  // Return the product image the shopper is CURRENTLY viewing in the gallery,
+  // so the preview/designer composites onto the selected image instead of
+  // always the first one. Clicking a gallery thumbnail is not a variant change,
+  // so PRODUCT_IMAGE (set at load / on variant:changed) doesn't cover it — we
+  // read the live DOM at upload time. Falls back to the load-time image.
+  function _upsizeShopifyImg(url) {
+    try {
+      const u = new URL(url, location.href);
+      if (/cdn\/shop|cdn\.shopify/.test(u.href)) u.searchParams.set('width', '1600');
+      return u.href;
+    } catch (e) { return url; }
+  }
+  function getCurrentProductImage() {
+    const selectors = [
+      '.product__media.is-active img, .product__media-item.is-active img',
+      '.product-single__media.is-active img, .product-single__photo.is-active img',
+      '.product__media-list .is-active img',
+      '.flickity-slider .is-selected img',
+      '.swiper-slide-active img',
+      '.slick-current img',
+      '[data-product-featured-media] img, [data-main-image] img',
+      '#ProductPhotoImg',
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      const src = el && (el.currentSrc || el.src);
+      if (src) return _upsizeShopifyImg(src);
+    }
+    // Fallback: the largest product image whose centre is in the viewport (this
+    // reliably picks the main/active image, even in slider galleries).
+    let best = '', bestArea = 0;
+    document.querySelectorAll('img').forEach((img) => {
+      const src = img.currentSrc || img.src || '';
+      if (!/cdn\/shop|cdn\.shopify/.test(src)) return;
+      const r = img.getBoundingClientRect();
+      if (r.width < 150 || r.height < 150) return;
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      if (cx < 0 || cx > window.innerWidth || cy < 0 || cy > window.innerHeight) return;
+      const area = r.width * r.height;
+      if (area > bestArea) { bestArea = area; best = src; }
+    });
+    return best ? _upsizeShopifyImg(best) : PRODUCT_IMAGE;
+  }
+
   function openPreview(templateUrl, placement, file, onConfirm) {
     pendingPreviewCallback = onConfirm;
     pendingPreviewFile = file;
@@ -1257,7 +1301,7 @@
         // image is always correct for whichever product the customer is
         // actually viewing. The merchant's custom template (if any) is
         // still used as a fallback for products with no image at all.
-        const canvasImage = PRODUCT_IMAGE || field.previewTemplateUrl;
+        const canvasImage = getCurrentProductImage() || field.previewTemplateUrl;
 
         if (field.enablePreview && canvasImage && field.allowCustomerPositioning) {
           // Full designer: customer drags/resizes/rotates their image and
