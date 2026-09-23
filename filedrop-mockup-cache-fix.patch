@@ -1,0 +1,17 @@
+diff --git a/backend/src/uploads/uploads.service.ts b/backend/src/uploads/uploads.service.ts
+index 2ca2f95..2bcfaf6 100644
+--- a/backend/src/uploads/uploads.service.ts
++++ b/backend/src/uploads/uploads.service.ts
+@@ -83,7 +83,11 @@ export class UploadsService {
+ 
+     const appUrl = process.env.APP_URL || '';
+     field.previewTemplateKey = key;
+-    field.previewTemplateUrl = `${appUrl}/api/v1/storefront/preview-template/${fieldId}`;
++    // Cache-bust per upload: the URL path is stable per field, so without a
++    // version the browser/CDN would keep serving the FIRST image after a
++    // re-upload. A fresh ?v= each upload forces the new image to load (the GET
++    // endpoint ignores the query param and serves the current file).
++    field.previewTemplateUrl = `${appUrl}/api/v1/storefront/preview-template/${fieldId}?v=${Date.now()}`;
+     field.enablePreview = true;
+     if (!field.previewPlacement) {
+       // Sensible default placement so merchants see something immediately
