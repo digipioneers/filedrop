@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   Page, Layout, Card, Form, FormLayout, TextField, Select,
   Checkbox, RangeSlider, Tag, Button, Spinner, Banner,
@@ -62,6 +62,7 @@ export function UploadFieldFormPage() {
   const navigate = useNavigate();
   const { id } = useParams();
   const queryClient = useQueryClient();
+  const templateInputRef = useRef<HTMLInputElement>(null);
   const isEdit = !!id;
 
   const [form, setForm] = useState(defaultForm);
@@ -166,10 +167,13 @@ export function UploadFieldFormPage() {
   // existing field-update endpoint (PATCH) to blank previewTemplateUrl — the
   // storefront then falls back to the product image automatically.
   const removeTemplateMutation = useMutation({
-    mutationFn: () => api.patch(`/uploads/fields/${id}`, { previewTemplateUrl: '' }),
+    mutationFn: () => api.delete(`/uploads/fields/${id}/preview-template`),
     onSuccess: () => {
+      // Clear locally only — the backend has already removed it. We deliberately
+      // do NOT refetch/invalidate here: that would re-run the form-reset effect
+      // and (a) fight this clear and (b) discard any other unsaved edits.
       set('previewTemplateUrl')('');
-      queryClient.invalidateQueries({ queryKey: ['upload-field', id] });
+      if (templateInputRef.current) templateInputRef.current.value = '';
     },
     onError: (err: any) => {
       const msg = err.response?.data?.message;
@@ -490,7 +494,7 @@ export function UploadFieldFormPage() {
                             overlaid on top of it.
                           </Text>
                           <div style={{ marginTop: 8 }}>
-                            <input type="file" accept="image/*" onChange={handleTemplateFileChange} />
+                            <input ref={templateInputRef} type="file" accept="image/*" onChange={handleTemplateFileChange} />
                           </div>
                           {templateUploadMutation.isPending && <Spinner size="small" />}
 

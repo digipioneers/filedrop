@@ -94,6 +94,22 @@ export class UploadsService {
     return this.fieldRepo.save(field);
   }
 
+  /**
+   * Removes the merchant's mockup/template for a field: deletes the stored file
+   * and clears both the URL and the internal storage key. Used by the admin
+   * "Remove" button so a wrong template can be cleared. The storefront then
+   * falls back to the product image automatically.
+   */
+  async clearPreviewTemplate(merchantId: string, fieldId: string): Promise<UploadField> {
+    const field = await this.findField(merchantId, fieldId);
+    if (field.previewTemplateKey) {
+      await this.storageService.deleteFile(field.previewTemplateKey).catch(() => {});
+    }
+    field.previewTemplateUrl = null as any;
+    field.previewTemplateKey = null as any;
+    return this.fieldRepo.save(field);
+  }
+
   async getFieldsForProduct(
     shopDomain: string,
     productId: string,

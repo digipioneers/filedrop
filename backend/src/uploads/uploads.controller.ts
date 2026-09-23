@@ -96,6 +96,18 @@ export class UploadsController {
     return this.uploadsService.uploadPreviewTemplate(req.user.id, id, file);
   }
 
+  /**
+   * DELETE /api/v1/uploads/fields/:id/preview-template
+   * Removes the merchant's mockup/template image for a field.
+   */
+  @Delete('fields/:id/preview-template')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Remove the preview template image for a field' })
+  clearPreviewTemplate(@Request() req, @Param('id') id: string) {
+    return this.uploadsService.clearPreviewTemplate(req.user.id, id);
+  }
+
   // ─── Storefront API (public — called from theme extension) ─────────────────
 
   @Get('fields/storefront')
