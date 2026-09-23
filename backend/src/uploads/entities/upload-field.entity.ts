@@ -145,6 +145,16 @@ export class UploadField {
   @Column({ name: 'allow_customer_text', default: false })
   allowCustomerText: boolean;
 
+  /**
+   * Client-requested: which image the preview/designer composites onto.
+   *  - 'product' (default): the product image the shopper is viewing.
+   *  - 'custom': the merchant-uploaded mockup (previewTemplateUrl), which then
+   *    OVERRIDES the product image.
+   * Defaults to 'product' so existing fields keep their current behavior.
+   */
+  @Column({ name: 'background_source', length: 20, default: 'product' })
+  backgroundSource: string;
+
   @Column({ type: 'json', name: 'conditional_rules', nullable: true })
   conditionalRules: any;
 

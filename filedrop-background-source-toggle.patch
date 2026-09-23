@@ -1,0 +1,133 @@
+diff --git a/backend/src/storefront/storefront.service.ts b/backend/src/storefront/storefront.service.ts
+index 8a90ca8..d1ae03d 100644
+--- a/backend/src/storefront/storefront.service.ts
++++ b/backend/src/storefront/storefront.service.ts
+@@ -154,6 +154,7 @@ export class StorefrontService {
+         previewPlacement: f.enablePreview ? f.previewPlacement : null,
+         allowCustomerPositioning: f.enablePreview ? f.allowCustomerPositioning : false,
+         allowCustomerText: f.enablePreview ? f.allowCustomerText : false,
++        backgroundSource: f.enablePreview ? (f.backgroundSource || 'product') : 'product',
+         minWidth: f.minWidth,
+         maxWidth: f.maxWidth,
+         minHeight: f.minHeight,
+diff --git a/backend/src/uploads/dto/create-upload-field.dto.ts b/backend/src/uploads/dto/create-upload-field.dto.ts
+index f73bf59..808fe6d 100644
+--- a/backend/src/uploads/dto/create-upload-field.dto.ts
++++ b/backend/src/uploads/dto/create-upload-field.dto.ts
+@@ -1,4 +1,4 @@
+-import { IsString, IsEnum, IsBoolean, IsNumber, IsArray, IsObject, IsOptional, Min, Max } from 'class-validator';
++import { IsString, IsEnum, IsBoolean, IsNumber, IsArray, IsObject, IsOptional, IsIn, Min, Max } from 'class-validator';
+ import { FieldType, AssignmentType } from '../entities/upload-field.entity';
+ 
+ export class CreateUploadFieldDto {
+@@ -114,6 +114,11 @@ export class CreateUploadFieldDto {
+   @IsOptional()
+   allowCustomerText?: boolean;
+ 
++  @IsString()
++  @IsIn(['product', 'custom'])
++  @IsOptional()
++  backgroundSource?: string;
++
+   @IsBoolean()
+   @IsOptional()
+   isActive?: boolean;
+diff --git a/backend/src/uploads/dto/update-upload-field.dto.ts b/backend/src/uploads/dto/update-upload-field.dto.ts
+index f73bf59..808fe6d 100644
+--- a/backend/src/uploads/dto/update-upload-field.dto.ts
++++ b/backend/src/uploads/dto/update-upload-field.dto.ts
+@@ -1,4 +1,4 @@
+-import { IsString, IsEnum, IsBoolean, IsNumber, IsArray, IsObject, IsOptional, Min, Max } from 'class-validator';
++import { IsString, IsEnum, IsBoolean, IsNumber, IsArray, IsObject, IsOptional, IsIn, Min, Max } from 'class-validator';
+ import { FieldType, AssignmentType } from '../entities/upload-field.entity';
+ 
+ export class CreateUploadFieldDto {
+@@ -114,6 +114,11 @@ export class CreateUploadFieldDto {
+   @IsOptional()
+   allowCustomerText?: boolean;
+ 
++  @IsString()
++  @IsIn(['product', 'custom'])
++  @IsOptional()
++  backgroundSource?: string;
++
+   @IsBoolean()
+   @IsOptional()
+   isActive?: boolean;
+diff --git a/backend/src/uploads/entities/upload-field.entity.ts b/backend/src/uploads/entities/upload-field.entity.ts
+index 7174cb6..b98535a 100644
+--- a/backend/src/uploads/entities/upload-field.entity.ts
++++ b/backend/src/uploads/entities/upload-field.entity.ts
+@@ -145,6 +145,16 @@ export class UploadField {
+   @Column({ name: 'allow_customer_text', default: false })
+   allowCustomerText: boolean;
+ 
++  /**
++   * Client-requested: which image the preview/designer composites onto.
++   *  - 'product' (default): the product image the shopper is viewing.
++   *  - 'custom': the merchant-uploaded mockup (previewTemplateUrl), which then
++   *    OVERRIDES the product image.
++   * Defaults to 'product' so existing fields keep their current behavior.
++   */
++  @Column({ name: 'background_source', length: 20, default: 'product' })
++  backgroundSource: string;
++
+   @Column({ type: 'json', name: 'conditional_rules', nullable: true })
+   conditionalRules: any;
+ 
+diff --git a/extensions/theme-extension/blocks/upload-widget.liquid b/extensions/theme-extension/blocks/upload-widget.liquid
+index 142d4f8..92cb4de 100644
+--- a/extensions/theme-extension/blocks/upload-widget.liquid
++++ b/extensions/theme-extension/blocks/upload-widget.liquid
+@@ -1301,7 +1301,13 @@
+         // image is always correct for whichever product the customer is
+         // actually viewing. The merchant's custom template (if any) is
+         // still used as a fallback for products with no image at all.
+-        const canvasImage = getCurrentProductImage() || field.previewTemplateUrl;
++        // Choose the preview/designer background per the merchant's setting:
++        //  - 'custom': use the merchant's uploaded mockup (overrides product img)
++        //  - 'product' (default): use the product image the shopper is viewing
++        const useCustomMockup = field.backgroundSource === 'custom' && field.previewTemplateUrl;
++        const canvasImage = useCustomMockup
++          ? field.previewTemplateUrl
++          : (getCurrentProductImage() || field.previewTemplateUrl);
+ 
+         if (field.enablePreview && canvasImage && field.allowCustomerPositioning) {
+           // Full designer: customer drags/resizes/rotates their image and
+diff --git a/frontend/src/pages/UploadFieldFormPage.tsx b/frontend/src/pages/UploadFieldFormPage.tsx
+index ef8887f..eea51d2 100644
+--- a/frontend/src/pages/UploadFieldFormPage.tsx
++++ b/frontend/src/pages/UploadFieldFormPage.tsx
+@@ -54,6 +54,7 @@ const defaultForm = {
+   previewPlacement: { x: 25, y: 25, width: 50, height: 50 },
+   allowCustomerPositioning: false,
+   allowCustomerText: false,
++  backgroundSource: 'product' as string,
+   isActive: true,
+ };
+ 
+@@ -96,6 +97,7 @@ export function UploadFieldFormPage() {
+         allowedExtensions: Array.isArray(field.allowedExtensions)
+           ? field.allowedExtensions
+           : [],
++        backgroundSource: field.backgroundSource || 'product',
+       });
+     }
+   }, [field]);
+@@ -429,6 +431,16 @@ export function UploadFieldFormPage() {
+ 
+                     {form.enablePreview && (
+                       <BlockStack gap="200">
++                        <Select
++                          label="Preview background image"
++                          options={[
++                            { label: 'Use the product image the customer is viewing', value: 'product' },
++                            { label: 'Use my custom mockup template (overrides the product image)', value: 'custom' },
++                          ]}
++                          value={form.backgroundSource}
++                          onChange={set('backgroundSource')}
++                          helpText="Choose what the customer's uploaded image is placed on: the store product image, or a mockup you upload below."
++                        />
+                         <Checkbox
+                           label="Allow customers to reposition their image"
+                           checked={form.allowCustomerPositioning}

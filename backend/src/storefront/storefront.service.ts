@@ -154,6 +154,7 @@ export class StorefrontService {
         previewPlacement: f.enablePreview ? f.previewPlacement : null,
         allowCustomerPositioning: f.enablePreview ? f.allowCustomerPositioning : false,
         allowCustomerText: f.enablePreview ? f.allowCustomerText : false,
+        backgroundSource: f.enablePreview ? (f.backgroundSource || 'product') : 'product',
         minWidth: f.minWidth,
         maxWidth: f.maxWidth,
         minHeight: f.minHeight,

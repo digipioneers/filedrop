@@ -1301,7 +1301,13 @@
         // image is always correct for whichever product the customer is
         // actually viewing. The merchant's custom template (if any) is
         // still used as a fallback for products with no image at all.
-        const canvasImage = getCurrentProductImage() || field.previewTemplateUrl;
+        // Choose the preview/designer background per the merchant's setting:
+        //  - 'custom': use the merchant's uploaded mockup (overrides product img)
+        //  - 'product' (default): use the product image the shopper is viewing
+        const useCustomMockup = field.backgroundSource === 'custom' && field.previewTemplateUrl;
+        const canvasImage = useCustomMockup
+          ? field.previewTemplateUrl
+          : (getCurrentProductImage() || field.previewTemplateUrl);
 
         if (field.enablePreview && canvasImage && field.allowCustomerPositioning) {
           // Full designer: customer drags/resizes/rotates their image and

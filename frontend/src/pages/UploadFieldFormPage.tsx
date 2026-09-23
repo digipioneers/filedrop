@@ -54,6 +54,7 @@ const defaultForm = {
   previewPlacement: { x: 25, y: 25, width: 50, height: 50 },
   allowCustomerPositioning: false,
   allowCustomerText: false,
+  backgroundSource: 'product' as string,
   isActive: true,
 };
 
@@ -96,6 +97,7 @@ export function UploadFieldFormPage() {
         allowedExtensions: Array.isArray(field.allowedExtensions)
           ? field.allowedExtensions
           : [],
+        backgroundSource: field.backgroundSource || 'product',
       });
     }
   }, [field]);
@@ -429,6 +431,16 @@ export function UploadFieldFormPage() {
 
                     {form.enablePreview && (
                       <BlockStack gap="200">
+                        <Select
+                          label="Preview background image"
+                          options={[
+                            { label: 'Use the product image the customer is viewing', value: 'product' },
+                            { label: 'Use my custom mockup template (overrides the product image)', value: 'custom' },
+                          ]}
+                          value={form.backgroundSource}
+                          onChange={set('backgroundSource')}
+                          helpText="Choose what the customer's uploaded image is placed on: the store product image, or a mockup you upload below."
+                        />
                         <Checkbox
                           label="Allow customers to reposition their image"
                           checked={form.allowCustomerPositioning}

@@ -1,4 +1,4 @@
-import { IsString, IsEnum, IsBoolean, IsNumber, IsArray, IsObject, IsOptional, Min, Max } from 'class-validator';
+import { IsString, IsEnum, IsBoolean, IsNumber, IsArray, IsObject, IsOptional, IsIn, Min, Max } from 'class-validator';
 import { FieldType, AssignmentType } from '../entities/upload-field.entity';
 
 export class CreateUploadFieldDto {
@@ -113,6 +113,11 @@ export class CreateUploadFieldDto {
   @IsBoolean()
   @IsOptional()
   allowCustomerText?: boolean;
+
+  @IsString()
+  @IsIn(['product', 'custom'])
+  @IsOptional()
+  backgroundSource?: string;
 
   @IsBoolean()
   @IsOptional()
