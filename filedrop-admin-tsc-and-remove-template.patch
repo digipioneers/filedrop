@@ -1,0 +1,230 @@
+diff --git a/frontend/src/components/uploads/FileList.tsx b/frontend/src/components/uploads/FileList.tsx
+index 6bb204a..6d4f7c6 100644
+--- a/frontend/src/components/uploads/FileList.tsx
++++ b/frontend/src/components/uploads/FileList.tsx
+@@ -70,8 +70,8 @@ export function FileList({
+   ];
+ 
+   const rows = uploads.map((u) => [
+-    <Text variant="bodySm" fontWeight="semibold" truncate>{u.originalFileName}</Text>,
+-    <Text variant="bodySm" tone="subdued">{u.mimeType.split('/')[1]?.toUpperCase() ?? u.mimeType}</Text>,
++    <Text as="span" variant="bodySm" fontWeight="semibold" truncate>{u.originalFileName}</Text>,
++    <Text as="span" variant="bodySm" tone="subdued">{u.mimeType.split('/')[1]?.toUpperCase() ?? u.mimeType}</Text>,
+     formatBytes(u.fileSizeBytes),
+     ...(showOrder ? [u.orderId ? `#${u.orderId}` : '—'] : []),
+     <FileStatusBadge status={u.status} />,
+diff --git a/frontend/src/components/uploads/FilePreviewCard.tsx b/frontend/src/components/uploads/FilePreviewCard.tsx
+index f129144..bdee5f7 100644
+--- a/frontend/src/components/uploads/FilePreviewCard.tsx
++++ b/frontend/src/components/uploads/FilePreviewCard.tsx
+@@ -47,28 +47,28 @@ export function FilePreviewCard({ upload, signedUrl, onDelete, showOrder = true
+   return (
+     <Card>
+       <Box padding="400">
+-        <InlineStack align="space-between" blockAlignment="start" gap="400">
+-          <InlineStack gap="400" blockAlignment="start">
++        <InlineStack align="space-between" blockAlign="start" gap="400">
++          <InlineStack gap="400" blockAlign="start">
+             {thumbnail}
+             <BlockStack gap="100">
+-              <Text variant="bodyMd" fontWeight="semibold" truncate>
++              <Text as="span" variant="bodyMd" fontWeight="semibold" truncate>
+                 {upload.originalFileName}
+               </Text>
+-              <Text variant="bodySm" tone="subdued">
++              <Text as="span" variant="bodySm" tone="subdued">
+                 {formatBytes(upload.fileSizeBytes)}
+                 {upload.imageWidth && upload.imageHeight
+                   ? ` · ${upload.imageWidth}×${upload.imageHeight}px`
+                   : ''}
+               </Text>
+-              <Text variant="bodySm" tone="subdued">
++              <Text as="span" variant="bodySm" tone="subdued">
+                 {upload.mimeType}
+               </Text>
+               {showOrder && upload.orderId && (
+-                <Text variant="bodySm" tone="subdued">
++                <Text as="span" variant="bodySm" tone="subdued">
+                   Order #{upload.orderId}
+                 </Text>
+               )}
+-              <Text variant="bodySm" tone="subdued">
++              <Text as="span" variant="bodySm" tone="subdued">
+                 {formatDateTime(upload.createdAt)}
+               </Text>
+             </BlockStack>
+diff --git a/frontend/src/pages/BillingPage.tsx b/frontend/src/pages/BillingPage.tsx
+index 76518d0..154ad00 100644
+--- a/frontend/src/pages/BillingPage.tsx
++++ b/frontend/src/pages/BillingPage.tsx
+@@ -94,7 +94,7 @@ function PlanCard({
+             <Badge tone="success" >Current Plan</Badge>
+           ) : (
+             <Button
+-              primary={isPro}
++              variant={isPro ? "primary" : "secondary"}
+               fullWidth
+               loading={isLoading}
+               disabled={disabled && !isLoading}
+diff --git a/frontend/src/pages/DashboardPage.tsx b/frontend/src/pages/DashboardPage.tsx
+index ec55876..c5156f5 100644
+--- a/frontend/src/pages/DashboardPage.tsx
++++ b/frontend/src/pages/DashboardPage.tsx
+@@ -47,7 +47,7 @@ function StatCard({
+         </div>
+         {helpText && (
+           <div style={{ marginTop: '4px' }}>
+-            <Text variant="bodySm" tone="subdued">{helpText}</Text>
++            <Text as="span" variant="bodySm" tone="subdued">{helpText}</Text>
+           </div>
+         )}
+       </div>
+diff --git a/frontend/src/pages/OrdersPage.tsx b/frontend/src/pages/OrdersPage.tsx
+index 00e25dc..f9a0d63 100644
+--- a/frontend/src/pages/OrdersPage.tsx
++++ b/frontend/src/pages/OrdersPage.tsx
+@@ -84,7 +84,7 @@ export default function OrdersPage() {
+         title={`Order #${(detail as any)?.shopifyOrderId || orderId?.slice(0,8)}`}
+         primaryAction={{ content: 'Download All', loading: downloading, onAction: () => orderId && downloadAll(orderId) }}
+         secondaryActions={[{ content: 'Close', onAction: () => setOrderId(null) }]}
+-        large>
++        size="large">
+         <Modal.Section>
+           {loadingDetail ? <InlineStack align="center"><Spinner /></InlineStack> :
+             detail ? (
+diff --git a/frontend/src/pages/UploadFieldFormPage.tsx b/frontend/src/pages/UploadFieldFormPage.tsx
+index eea51d2..6859b2d 100644
+--- a/frontend/src/pages/UploadFieldFormPage.tsx
++++ b/frontend/src/pages/UploadFieldFormPage.tsx
+@@ -125,8 +125,8 @@ export function UploadFieldFormPage() {
+     }
+     saveMutation.mutate({
+       ...form,
+-      maxFileSizeMb: form.maxFileSizeMb !== '' && form.maxFileSizeMb != null ? Number(form.maxFileSizeMb) : 10,
+-      minFileSizeMb: form.minFileSizeMb !== '' && form.minFileSizeMb != null ? Number(form.minFileSizeMb) : 0,
++      maxFileSizeMb: form.maxFileSizeMb != null && String(form.maxFileSizeMb) !== '' ? Number(form.maxFileSizeMb) : 10,
++      minFileSizeMb: form.minFileSizeMb != null && String(form.minFileSizeMb) !== '' ? Number(form.minFileSizeMb) : 0,
+       minWidth: form.minWidth ? parseInt(String(form.minWidth)) : undefined,
+       maxWidth: form.maxWidth ? parseInt(String(form.maxWidth)) : undefined,
+       minHeight: form.minHeight ? parseInt(String(form.minHeight)) : undefined,
+@@ -162,6 +162,21 @@ export function UploadFieldFormPage() {
+     if (file) templateUploadMutation.mutate(file);
+   };
+ 
++  // Clears the saved mockup so a wrong one can be removed/replaced. Uses the
++  // existing field-update endpoint (PATCH) to blank previewTemplateUrl — the
++  // storefront then falls back to the product image automatically.
++  const removeTemplateMutation = useMutation({
++    mutationFn: () => api.patch(`/uploads/fields/${id}`, { previewTemplateUrl: '' }),
++    onSuccess: () => {
++      set('previewTemplateUrl')('');
++      queryClient.invalidateQueries({ queryKey: ['upload-field', id] });
++    },
++    onError: (err: any) => {
++      const msg = err.response?.data?.message;
++      setError(Array.isArray(msg) ? msg.join('. ') : (msg ?? 'Failed to remove template'));
++    },
++  });
++
+   const setPlacement = (key: 'x' | 'y' | 'width' | 'height') => (value: string) => {
+     const num = Math.max(0, Math.min(100, Number(value) || 0));
+     setForm((prev) => ({ ...prev, previewPlacement: { ...prev.previewPlacement, [key]: num } }));
+@@ -204,7 +219,7 @@ export function UploadFieldFormPage() {
+   return (
+     <Page
+       title={isEdit ? 'Edit Upload Field' : 'Create Upload Field'}
+-      breadcrumbs={[{ content: 'Upload Fields', onAction: () => navigate('/app/fields') }]}
++      backAction={{ content: 'Upload Fields', onAction: () => navigate('/app/fields') }}
+       primaryAction={{
+         content: 'Save',
+         loading: saveMutation.isPending,
+@@ -315,14 +330,16 @@ export function UploadFieldFormPage() {
+                     <div>
+                       <Text variant="bodyMd" as="p" fontWeight="semibold">Allowed Extensions</Text>
+                       <Text variant="bodySm" tone="subdued" as="p">Leave empty to allow all types for this field</Text>
+-                      <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
++                      <div
++                        style={{ display: 'flex', gap: '8px', marginTop: '8px' }}
++                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addExtension(); } }}
++                      >
+                         <TextField
+                           label=""
+                           labelHidden
+                           value={newExtension}
+                           onChange={setNewExtension}
+                           placeholder=".jpg or jpg"
+-                          onKeyPress={(e: any) => e.key === 'Enter' && addExtension()}
+                           autoComplete="off"
+                           connectedRight={<Button onClick={addExtension}>Add</Button>}
+                         />
+@@ -353,14 +370,16 @@ export function UploadFieldFormPage() {
+                       <div>
+                         <Text variant="bodyMd" as="p" fontWeight="semibold">Product Tags</Text>
+                         <Text variant="bodySm" tone="subdued" as="p">Show this field for products with these tags</Text>
+-                        <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
++                        <div
++                          style={{ display: 'flex', gap: '8px', marginTop: '8px' }}
++                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }}
++                        >
+                           <TextField
+                             label=""
+                             labelHidden
+                             value={newTag}
+                             onChange={setNewTag}
+                             placeholder="e.g. custom, personalized"
+-                            onKeyPress={(e: any) => e.key === 'Enter' && addTag()}
+                             autoComplete="off"
+                             connectedRight={<Button onClick={addTag}>Add Tag</Button>}
+                           />
+@@ -474,6 +493,32 @@ export function UploadFieldFormPage() {
+                             <input type="file" accept="image/*" onChange={handleTemplateFileChange} />
+                           </div>
+                           {templateUploadMutation.isPending && <Spinner size="small" />}
++
++                          {form.previewTemplateUrl && (
++                            <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
++                              <img
++                                src={form.previewTemplateUrl}
++                                alt="Current mockup template"
++                                style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 6, border: '1px solid #dcdcdc' }}
++                              />
++                              <div>
++                                <Text as="p" variant="bodySm" tone="subdued">Current mockup template</Text>
++                                <div style={{ marginTop: 4 }}>
++                                  <Button
++                                    size="slim"
++                                    tone="critical"
++                                    onClick={() => removeTemplateMutation.mutate()}
++                                    loading={removeTemplateMutation.isPending}
++                                  >
++                                    Remove
++                                  </Button>
++                                </div>
++                                <Text as="p" variant="bodySm" tone="subdued">
++                                  To change it, choose a new file above — it replaces the current one.
++                                </Text>
++                              </div>
++                            </div>
++                          )}
+                         </div>
+ 
+                         {form.previewTemplateUrl && (
+diff --git a/frontend/src/pages/UploadFieldsPage.tsx b/frontend/src/pages/UploadFieldsPage.tsx
+index 7517ddf..fbecec4 100644
+--- a/frontend/src/pages/UploadFieldsPage.tsx
++++ b/frontend/src/pages/UploadFieldsPage.tsx
+@@ -120,7 +120,6 @@ export function UploadFieldsPage() {
+                       },
+                       {
+                         content: 'Delete',
+-                        destructive: true,
+                         onAction: () => setDeleteModalField(field),
+                       },
+                     ]}
+diff --git a/frontend/src/vite-env.d.ts b/frontend/src/vite-env.d.ts
+new file mode 100644
+index 0000000..11f02fe
+--- /dev/null
++++ b/frontend/src/vite-env.d.ts
+@@ -0,0 +1 @@
++/// <reference types="vite/client" />

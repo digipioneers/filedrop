@@ -47,28 +47,28 @@ export function FilePreviewCard({ upload, signedUrl, onDelete, showOrder = true 
   return (
     <Card>
       <Box padding="400">
-        <InlineStack align="space-between" blockAlignment="start" gap="400">
-          <InlineStack gap="400" blockAlignment="start">
+        <InlineStack align="space-between" blockAlign="start" gap="400">
+          <InlineStack gap="400" blockAlign="start">
             {thumbnail}
             <BlockStack gap="100">
-              <Text variant="bodyMd" fontWeight="semibold" truncate>
+              <Text as="span" variant="bodyMd" fontWeight="semibold" truncate>
                 {upload.originalFileName}
               </Text>
-              <Text variant="bodySm" tone="subdued">
+              <Text as="span" variant="bodySm" tone="subdued">
                 {formatBytes(upload.fileSizeBytes)}
                 {upload.imageWidth && upload.imageHeight
                   ? ` · ${upload.imageWidth}×${upload.imageHeight}px`
                   : ''}
               </Text>
-              <Text variant="bodySm" tone="subdued">
+              <Text as="span" variant="bodySm" tone="subdued">
                 {upload.mimeType}
               </Text>
               {showOrder && upload.orderId && (
-                <Text variant="bodySm" tone="subdued">
+                <Text as="span" variant="bodySm" tone="subdued">
                   Order #{upload.orderId}
                 </Text>
               )}
-              <Text variant="bodySm" tone="subdued">
+              <Text as="span" variant="bodySm" tone="subdued">
                 {formatDateTime(upload.createdAt)}
               </Text>
             </BlockStack>

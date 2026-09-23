@@ -94,7 +94,7 @@ function PlanCard({
             <Badge tone="success" >Current Plan</Badge>
           ) : (
             <Button
-              primary={isPro}
+              variant={isPro ? "primary" : "secondary"}
               fullWidth
               loading={isLoading}
               disabled={disabled && !isLoading}

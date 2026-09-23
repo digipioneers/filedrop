@@ -47,7 +47,7 @@ function StatCard({
         </div>
         {helpText && (
           <div style={{ marginTop: '4px' }}>
-            <Text variant="bodySm" tone="subdued">{helpText}</Text>
+            <Text as="span" variant="bodySm" tone="subdued">{helpText}</Text>
           </div>
         )}
       </div>

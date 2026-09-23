@@ -84,7 +84,7 @@ export default function OrdersPage() {
         title={`Order #${(detail as any)?.shopifyOrderId || orderId?.slice(0,8)}`}
         primaryAction={{ content: 'Download All', loading: downloading, onAction: () => orderId && downloadAll(orderId) }}
         secondaryActions={[{ content: 'Close', onAction: () => setOrderId(null) }]}
-        large>
+        size="large">
         <Modal.Section>
           {loadingDetail ? <InlineStack align="center"><Spinner /></InlineStack> :
             detail ? (

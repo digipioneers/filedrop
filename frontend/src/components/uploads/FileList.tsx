@@ -70,8 +70,8 @@ export function FileList({
   ];
 
   const rows = uploads.map((u) => [
-    <Text variant="bodySm" fontWeight="semibold" truncate>{u.originalFileName}</Text>,
-    <Text variant="bodySm" tone="subdued">{u.mimeType.split('/')[1]?.toUpperCase() ?? u.mimeType}</Text>,
+    <Text as="span" variant="bodySm" fontWeight="semibold" truncate>{u.originalFileName}</Text>,
+    <Text as="span" variant="bodySm" tone="subdued">{u.mimeType.split('/')[1]?.toUpperCase() ?? u.mimeType}</Text>,
     formatBytes(u.fileSizeBytes),
     ...(showOrder ? [u.orderId ? `#${u.orderId}` : '—'] : []),
     <FileStatusBadge status={u.status} />,

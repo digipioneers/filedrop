@@ -120,7 +120,6 @@ export function UploadFieldsPage() {
                       },
                       {
                         content: 'Delete',
-                        destructive: true,
                         onAction: () => setDeleteModalField(field),
                       },
                     ]}

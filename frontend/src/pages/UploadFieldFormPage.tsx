@@ -125,8 +125,8 @@ export function UploadFieldFormPage() {
     }
     saveMutation.mutate({
       ...form,
-      maxFileSizeMb: form.maxFileSizeMb !== '' && form.maxFileSizeMb != null ? Number(form.maxFileSizeMb) : 10,
-      minFileSizeMb: form.minFileSizeMb !== '' && form.minFileSizeMb != null ? Number(form.minFileSizeMb) : 0,
+      maxFileSizeMb: form.maxFileSizeMb != null && String(form.maxFileSizeMb) !== '' ? Number(form.maxFileSizeMb) : 10,
+      minFileSizeMb: form.minFileSizeMb != null && String(form.minFileSizeMb) !== '' ? Number(form.minFileSizeMb) : 0,
       minWidth: form.minWidth ? parseInt(String(form.minWidth)) : undefined,
       maxWidth: form.maxWidth ? parseInt(String(form.maxWidth)) : undefined,
       minHeight: form.minHeight ? parseInt(String(form.minHeight)) : undefined,
@@ -161,6 +161,21 @@ export function UploadFieldFormPage() {
     const file = e.target.files?.[0];
     if (file) templateUploadMutation.mutate(file);
   };
+
+  // Clears the saved mockup so a wrong one can be removed/replaced. Uses the
+  // existing field-update endpoint (PATCH) to blank previewTemplateUrl — the
+  // storefront then falls back to the product image automatically.
+  const removeTemplateMutation = useMutation({
+    mutationFn: () => api.patch(`/uploads/fields/${id}`, { previewTemplateUrl: '' }),
+    onSuccess: () => {
+      set('previewTemplateUrl')('');
+      queryClient.invalidateQueries({ queryKey: ['upload-field', id] });
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message;
+      setError(Array.isArray(msg) ? msg.join('. ') : (msg ?? 'Failed to remove template'));
+    },
+  });
 
   const setPlacement = (key: 'x' | 'y' | 'width' | 'height') => (value: string) => {
     const num = Math.max(0, Math.min(100, Number(value) || 0));
@@ -204,7 +219,7 @@ export function UploadFieldFormPage() {
   return (
     <Page
       title={isEdit ? 'Edit Upload Field' : 'Create Upload Field'}
-      breadcrumbs={[{ content: 'Upload Fields', onAction: () => navigate('/app/fields') }]}
+      backAction={{ content: 'Upload Fields', onAction: () => navigate('/app/fields') }}
       primaryAction={{
         content: 'Save',
         loading: saveMutation.isPending,
@@ -315,14 +330,16 @@ export function UploadFieldFormPage() {
                     <div>
                       <Text variant="bodyMd" as="p" fontWeight="semibold">Allowed Extensions</Text>
                       <Text variant="bodySm" tone="subdued" as="p">Leave empty to allow all types for this field</Text>
-                      <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                      <div
+                        style={{ display: 'flex', gap: '8px', marginTop: '8px' }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addExtension(); } }}
+                      >
                         <TextField
                           label=""
                           labelHidden
                           value={newExtension}
                           onChange={setNewExtension}
                           placeholder=".jpg or jpg"
-                          onKeyPress={(e: any) => e.key === 'Enter' && addExtension()}
                           autoComplete="off"
                           connectedRight={<Button onClick={addExtension}>Add</Button>}
                         />
@@ -353,14 +370,16 @@ export function UploadFieldFormPage() {
                       <div>
                         <Text variant="bodyMd" as="p" fontWeight="semibold">Product Tags</Text>
                         <Text variant="bodySm" tone="subdued" as="p">Show this field for products with these tags</Text>
-                        <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                        <div
+                          style={{ display: 'flex', gap: '8px', marginTop: '8px' }}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }}
+                        >
                           <TextField
                             label=""
                             labelHidden
                             value={newTag}
                             onChange={setNewTag}
                             placeholder="e.g. custom, personalized"
-                            onKeyPress={(e: any) => e.key === 'Enter' && addTag()}
                             autoComplete="off"
                             connectedRight={<Button onClick={addTag}>Add Tag</Button>}
                           />
@@ -474,6 +493,32 @@ export function UploadFieldFormPage() {
                             <input type="file" accept="image/*" onChange={handleTemplateFileChange} />
                           </div>
                           {templateUploadMutation.isPending && <Spinner size="small" />}
+
+                          {form.previewTemplateUrl && (
+                            <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
+                              <img
+                                src={form.previewTemplateUrl}
+                                alt="Current mockup template"
+                                style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 6, border: '1px solid #dcdcdc' }}
+                              />
+                              <div>
+                                <Text as="p" variant="bodySm" tone="subdued">Current mockup template</Text>
+                                <div style={{ marginTop: 4 }}>
+                                  <Button
+                                    size="slim"
+                                    tone="critical"
+                                    onClick={() => removeTemplateMutation.mutate()}
+                                    loading={removeTemplateMutation.isPending}
+                                  >
+                                    Remove
+                                  </Button>
+                                </div>
+                                <Text as="p" variant="bodySm" tone="subdued">
+                                  To change it, choose a new file above — it replaces the current one.
+                                </Text>
+                              </div>
+                            </div>
+                          )}
                         </div>
 
                         {form.previewTemplateUrl && (
