@@ -89,6 +89,10 @@ export class StorefrontService {
       order: { sortOrder: 'ASC' },
     });
 
+    // Plan gating: premium capabilities are only enabled if the merchant's plan
+    // includes them, so features don't silently work on every plan.
+    const planFeatures = await this.getPlanFeatures(merchantId);
+
     // Start from what the widget sent directly (from Liquid): the product's
     // tags and collection IDs. This makes TAG and COLLECTION assignment work on
     // ANY product — including ones added after install that aren't in our cached
@@ -137,32 +141,40 @@ export class StorefrontService {
             return false;
         }
       })
-      .map(f => ({
-        id: f.id,
-        label: f.label,
-        description: f.description,
-        helpText: f.helpText,
-        buttonText: f.buttonText,
-        isRequired: f.required,
-        maxFileSizeMb: f.maxFileSizeMb,
-        minFileSizeMb: f.minFileSizeMb,
-        maxFiles: f.maxFiles,
-        allowedExtensions: f.allowedExtensions,
-        fieldType: f.fieldType,
-        enableCropping: f.enableCropping,
-        enableRotation: f.enableRotation,
-        enablePreview: f.enablePreview,
-        previewTemplateUrl: f.enablePreview ? f.previewTemplateUrl : null,
-        previewPlacement: f.enablePreview ? f.previewPlacement : null,
-        allowCustomerPositioning: f.enablePreview ? f.allowCustomerPositioning : false,
-        allowCustomerText: f.enablePreview ? f.allowCustomerText : false,
-        backgroundSource: f.enablePreview ? (f.backgroundSource || 'product') : 'product',
-        minWidth: f.minWidth,
-        maxWidth: f.maxWidth,
-        minHeight: f.minHeight,
-        maxHeight: f.maxHeight,
-        requiredAspectRatio: f.requiredAspectRatio,
-      }));
+      .map(f => {
+        // Enforce plan entitlements: a feature only reaches the storefront if
+        // BOTH the field is configured for it AND the merchant's plan allows it.
+        const editorAllowed = !!planFeatures.imageEditor;
+        const previewAllowed = f.enablePreview && !!planFeatures.productPreview;
+        const positioningAllowed =
+          previewAllowed && f.allowCustomerPositioning && !!planFeatures.customerPositioning;
+        return {
+          id: f.id,
+          label: f.label,
+          description: f.description,
+          helpText: f.helpText,
+          buttonText: f.buttonText,
+          isRequired: f.required,
+          maxFileSizeMb: f.maxFileSizeMb,
+          minFileSizeMb: f.minFileSizeMb,
+          maxFiles: f.maxFiles,
+          allowedExtensions: f.allowedExtensions,
+          fieldType: f.fieldType,
+          enableCropping: f.enableCropping && editorAllowed,
+          enableRotation: f.enableRotation && editorAllowed,
+          enablePreview: previewAllowed,
+          previewTemplateUrl: previewAllowed ? f.previewTemplateUrl : null,
+          previewPlacement: previewAllowed ? f.previewPlacement : null,
+          allowCustomerPositioning: positioningAllowed,
+          allowCustomerText: previewAllowed ? f.allowCustomerText : false,
+          backgroundSource: previewAllowed ? (f.backgroundSource || 'product') : 'product',
+          minWidth: f.minWidth,
+          maxWidth: f.maxWidth,
+          minHeight: f.minHeight,
+          maxHeight: f.maxHeight,
+          requiredAspectRatio: f.requiredAspectRatio,
+        };
+      });
   }
 
   /**
@@ -417,6 +429,25 @@ export class StorefrontService {
       `Rebound ${updated} upload(s) from cartToken "${oldCartToken}" to "${newCartToken}" for merchant ${merchantId}`,
     );
     return { updated };
+  }
+
+  /**
+   * Resolves the merchant's current plan feature entitlements, so premium
+   * features (image editor, product preview, customer positioning) are gated by
+   * plan rather than working on every plan. Falls back to the Free plan.
+   */
+  private async getPlanFeatures(merchantId: string): Promise<Record<string, boolean>> {
+    const sub = await this.subRepo.findOne({
+      where: [
+        { merchantId, status: SubscriptionStatus.ACTIVE },
+        { merchantId, status: SubscriptionStatus.TRIAL },
+      ],
+      order: { createdAt: 'DESC' },
+    });
+    const plan = sub
+      ? await this.planRepo.findOne({ where: { id: sub.planId } })
+      : await this.planRepo.findOne({ where: { name: PlanName.FREE } });
+    return (plan?.features as Record<string, boolean>) || {};
   }
 
   private async checkPlanLimits(merchant: Merchant) {
