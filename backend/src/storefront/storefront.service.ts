@@ -89,8 +89,8 @@ export class StorefrontService {
       order: { sortOrder: 'ASC' },
     });
 
-    // Plan gating: premium capabilities are only enabled if the merchant's plan
-    // includes them, so features don't silently work on every plan.
+    // Plan gating: premium capabilities only reach the storefront if the
+    // merchant's plan includes them (so features aren't free on every plan).
     const planFeatures = await this.getPlanFeatures(merchantId);
 
     // Start from what the widget sent directly (from Liquid): the product's
@@ -142,8 +142,8 @@ export class StorefrontService {
         }
       })
       .map(f => {
-        // Enforce plan entitlements: a feature only reaches the storefront if
-        // BOTH the field is configured for it AND the merchant's plan allows it.
+        // Enforce plan entitlements: a feature reaches the storefront only if
+        // the field is configured for it AND the plan allows it.
         const editorAllowed = !!planFeatures.imageEditor;
         const previewAllowed = f.enablePreview && !!planFeatures.productPreview;
         const positioningAllowed =
@@ -431,11 +431,6 @@ export class StorefrontService {
     return { updated };
   }
 
-  /**
-   * Resolves the merchant's current plan feature entitlements, so premium
-   * features (image editor, product preview, customer positioning) are gated by
-   * plan rather than working on every plan. Falls back to the Free plan.
-   */
   private async getPlanFeatures(merchantId: string): Promise<Record<string, boolean>> {
     const sub = await this.subRepo.findOne({
       where: [

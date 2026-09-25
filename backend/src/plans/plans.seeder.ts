@@ -106,30 +106,11 @@ export class PlansSeeder implements OnApplicationBootstrap {
         await this.planRepo.save(this.planRepo.create(p));
         this.logger.log(`Seeded new plan: ${p.name}`);
       } else {
-        // Upsert: keep pricing/features in sync with this seed data on
-        // every boot, so changing plan details here actually takes effect
-        // on the live database instead of silently being skipped because
-        // a row with that name already exists.
-        //
-        // Using save() with a merged entity here rather than update() —
-        // TypeORM's Repository.update() types its second argument as
-        // QueryDeepPartialEntity<T>, which tries to structurally match the
-        // `features` JSON column against an index-signature/relation shape
-        // and fails to compile even though the value itself is fine at
-        // runtime. save() accepts a full entity instance instead and
-        // doesn't hit that same overly-strict typing path.
-        await this.planRepo.save({
-          ...existing,
-          displayName: p.displayName,
-          monthlyPrice: p.monthlyPrice,
-          uploadsPerMonth: p.uploadsPerMonth,
-          storageBytes: p.storageBytes,
-          maxFileSizeBytes: p.maxFileSizeBytes,
-          features: p.features,
-          isActive: p.isActive,
-          sortOrder: p.sortOrder,
-        });
-        this.logger.log(`Updated existing plan: ${p.name}`);
+        // Leave existing plans untouched. Their pricing, limits and features are
+        // now managed from the super-admin Plans page, so overwriting them on
+        // every boot would silently wipe those edits. Only brand-new plans
+        // (missing from the DB) are seeded with these defaults.
+        this.logger.log(`Plan already exists, leaving admin-managed values intact: ${p.name}`);
       }
     }
   }

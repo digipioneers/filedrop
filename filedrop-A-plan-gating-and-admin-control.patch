@@ -1,0 +1,268 @@
+diff --git a/backend/src/plans/plans.seeder.ts b/backend/src/plans/plans.seeder.ts
+index 4ac22ec..e6defd1 100644
+--- a/backend/src/plans/plans.seeder.ts
++++ b/backend/src/plans/plans.seeder.ts
+@@ -106,30 +106,11 @@ export class PlansSeeder implements OnApplicationBootstrap {
+         await this.planRepo.save(this.planRepo.create(p));
+         this.logger.log(`Seeded new plan: ${p.name}`);
+       } else {
+-        // Upsert: keep pricing/features in sync with this seed data on
+-        // every boot, so changing plan details here actually takes effect
+-        // on the live database instead of silently being skipped because
+-        // a row with that name already exists.
+-        //
+-        // Using save() with a merged entity here rather than update() —
+-        // TypeORM's Repository.update() types its second argument as
+-        // QueryDeepPartialEntity<T>, which tries to structurally match the
+-        // `features` JSON column against an index-signature/relation shape
+-        // and fails to compile even though the value itself is fine at
+-        // runtime. save() accepts a full entity instance instead and
+-        // doesn't hit that same overly-strict typing path.
+-        await this.planRepo.save({
+-          ...existing,
+-          displayName: p.displayName,
+-          monthlyPrice: p.monthlyPrice,
+-          uploadsPerMonth: p.uploadsPerMonth,
+-          storageBytes: p.storageBytes,
+-          maxFileSizeBytes: p.maxFileSizeBytes,
+-          features: p.features,
+-          isActive: p.isActive,
+-          sortOrder: p.sortOrder,
+-        });
+-        this.logger.log(`Updated existing plan: ${p.name}`);
++        // Leave existing plans untouched. Their pricing, limits and features are
++        // now managed from the super-admin Plans page, so overwriting them on
++        // every boot would silently wipe those edits. Only brand-new plans
++        // (missing from the DB) are seeded with these defaults.
++        this.logger.log(`Plan already exists, leaving admin-managed values intact: ${p.name}`);
+       }
+     }
+   }
+diff --git a/backend/src/storefront/storefront.service.ts b/backend/src/storefront/storefront.service.ts
+index f22a328..a74f104 100644
+--- a/backend/src/storefront/storefront.service.ts
++++ b/backend/src/storefront/storefront.service.ts
+@@ -89,6 +89,10 @@ export class StorefrontService {
+       order: { sortOrder: 'ASC' },
+     });
+ 
++    // Plan gating: premium capabilities only reach the storefront if the
++    // merchant's plan includes them (so features aren't free on every plan).
++    const planFeatures = await this.getPlanFeatures(merchantId);
++
+     // Start from what the widget sent directly (from Liquid): the product's
+     // tags and collection IDs. This makes TAG and COLLECTION assignment work on
+     // ANY product — including ones added after install that aren't in our cached
+@@ -137,32 +141,40 @@ export class StorefrontService {
+             return false;
+         }
+       })
+-      .map(f => ({
+-        id: f.id,
+-        label: f.label,
+-        description: f.description,
+-        helpText: f.helpText,
+-        buttonText: f.buttonText,
+-        isRequired: f.required,
+-        maxFileSizeMb: f.maxFileSizeMb,
+-        minFileSizeMb: f.minFileSizeMb,
+-        maxFiles: f.maxFiles,
+-        allowedExtensions: f.allowedExtensions,
+-        fieldType: f.fieldType,
+-        enableCropping: f.enableCropping,
+-        enableRotation: f.enableRotation,
+-        enablePreview: f.enablePreview,
+-        previewTemplateUrl: f.enablePreview ? f.previewTemplateUrl : null,
+-        previewPlacement: f.enablePreview ? f.previewPlacement : null,
+-        allowCustomerPositioning: f.enablePreview ? f.allowCustomerPositioning : false,
+-        allowCustomerText: f.enablePreview ? f.allowCustomerText : false,
+-        backgroundSource: f.enablePreview ? (f.backgroundSource || 'product') : 'product',
+-        minWidth: f.minWidth,
+-        maxWidth: f.maxWidth,
+-        minHeight: f.minHeight,
+-        maxHeight: f.maxHeight,
+-        requiredAspectRatio: f.requiredAspectRatio,
+-      }));
++      .map(f => {
++        // Enforce plan entitlements: a feature reaches the storefront only if
++        // the field is configured for it AND the plan allows it.
++        const editorAllowed = !!planFeatures.imageEditor;
++        const previewAllowed = f.enablePreview && !!planFeatures.productPreview;
++        const positioningAllowed =
++          previewAllowed && f.allowCustomerPositioning && !!planFeatures.customerPositioning;
++        return {
++          id: f.id,
++          label: f.label,
++          description: f.description,
++          helpText: f.helpText,
++          buttonText: f.buttonText,
++          isRequired: f.required,
++          maxFileSizeMb: f.maxFileSizeMb,
++          minFileSizeMb: f.minFileSizeMb,
++          maxFiles: f.maxFiles,
++          allowedExtensions: f.allowedExtensions,
++          fieldType: f.fieldType,
++          enableCropping: f.enableCropping && editorAllowed,
++          enableRotation: f.enableRotation && editorAllowed,
++          enablePreview: previewAllowed,
++          previewTemplateUrl: previewAllowed ? f.previewTemplateUrl : null,
++          previewPlacement: previewAllowed ? f.previewPlacement : null,
++          allowCustomerPositioning: positioningAllowed,
++          allowCustomerText: previewAllowed ? f.allowCustomerText : false,
++          backgroundSource: previewAllowed ? (f.backgroundSource || 'product') : 'product',
++          minWidth: f.minWidth,
++          maxWidth: f.maxWidth,
++          minHeight: f.minHeight,
++          maxHeight: f.maxHeight,
++          requiredAspectRatio: f.requiredAspectRatio,
++        };
++      });
+   }
+ 
+   /**
+@@ -419,6 +431,20 @@ export class StorefrontService {
+     return { updated };
+   }
+ 
++  private async getPlanFeatures(merchantId: string): Promise<Record<string, boolean>> {
++    const sub = await this.subRepo.findOne({
++      where: [
++        { merchantId, status: SubscriptionStatus.ACTIVE },
++        { merchantId, status: SubscriptionStatus.TRIAL },
++      ],
++      order: { createdAt: 'DESC' },
++    });
++    const plan = sub
++      ? await this.planRepo.findOne({ where: { id: sub.planId } })
++      : await this.planRepo.findOne({ where: { name: PlanName.FREE } });
++    return (plan?.features as Record<string, boolean>) || {};
++  }
++
+   private async checkPlanLimits(merchant: Merchant) {
+     // Match ACTIVE *and* TRIAL subscriptions — a merchant on a trial should get
+     // their trial plan's limits, not silently fall back to the Free plan.
+diff --git a/frontend/src/pages/UploadFieldFormPage.tsx b/frontend/src/pages/UploadFieldFormPage.tsx
+index c63de09..65b98a0 100644
+--- a/frontend/src/pages/UploadFieldFormPage.tsx
++++ b/frontend/src/pages/UploadFieldFormPage.tsx
+@@ -77,6 +77,19 @@ export function UploadFieldFormPage() {
+     enabled: isEdit,
+   });
+ 
++  // Which premium features the merchant's current plan includes. Features
++  // configured here only work on the storefront if the plan allows them.
++  const { data: currentPlan } = useQuery({
++    queryKey: ['billing-current'],
++    queryFn: () => api.get('/billing/current').then((r) => r.data.data ?? r.data),
++  });
++  const planFeatures = (currentPlan?.plan?.features ?? {}) as Record<string, boolean>;
++  const planName = currentPlan?.plan?.displayName ?? '';
++  const upgradeHint = (feature: string) =>
++    planFeatures[feature] === false
++      ? `Not included in your ${planName} plan — it won't appear on your storefront until you upgrade.`
++      : undefined;
++
+   useEffect(() => {
+     if (field) {
+       setForm({
+@@ -436,12 +449,13 @@ export function UploadFieldFormPage() {
+                       label="Enable image cropping"
+                       checked={form.enableCropping}
+                       onChange={set('enableCropping')}
+-                      helpText="Customers can crop their image before uploading"
++                      helpText={upgradeHint('imageEditor') ?? 'Customers can crop their image before uploading'}
+                     />
+                     <Checkbox
+                       label="Enable image rotation"
+                       checked={form.enableRotation}
+                       onChange={set('enableRotation')}
++                      helpText={upgradeHint('imageEditor')}
+                     />
+ 
+                     <Text variant="headingSm" as="h3">Product Preview</Text>
+@@ -449,7 +463,7 @@ export function UploadFieldFormPage() {
+                       label="Enable product preview"
+                       checked={form.enablePreview}
+                       onChange={set('enablePreview')}
+-                      helpText="Customers see their uploaded image composited onto a product mockup before submitting, so they can confirm it looks right."
++                      helpText={upgradeHint('productPreview') ?? "Customers see their uploaded image composited onto a product mockup before submitting, so they can confirm it looks right."}
+                     />
+ 
+                     {form.enablePreview && (
+@@ -468,7 +482,7 @@ export function UploadFieldFormPage() {
+                           label="Allow customers to reposition their image"
+                           checked={form.allowCustomerPositioning}
+                           onChange={set('allowCustomerPositioning')}
+-                          helpText="Instead of a fixed placement, customers can drag, resize, and rotate their image on the mockup themselves — like a full design tool."
++                          helpText={upgradeHint('customerPositioning') ?? "Instead of a fixed placement, customers can drag, resize, and rotate their image on the mockup themselves — like a full design tool."}
+                         />
+                         <Checkbox
+                           label="Allow customers to add their own text"
+diff --git a/frontend/src/pages/admin/AdminPlans.tsx b/frontend/src/pages/admin/AdminPlans.tsx
+index f34bb04..14c786e 100644
+--- a/frontend/src/pages/admin/AdminPlans.tsx
++++ b/frontend/src/pages/admin/AdminPlans.tsx
+@@ -16,6 +16,18 @@ function extractArray(d: any): any[] {
+   return [];
+ }
+ 
++// The per-plan feature flags the storefront/admin enforce. Editing these here
++// controls which features are available on each plan.
++const FEATURES: { key: string; label: string }[] = [
++  { key: 'imageEditor', label: 'Image editor (crop/rotate)' },
++  { key: 'productPreview', label: 'Live product preview' },
++  { key: 'customerPositioning', label: 'Customer can reposition their design' },
++  { key: 'conditionalLogic', label: 'Conditional upload logic (assignment rules)' },
++  { key: 'emailNotifications', label: 'Email notifications' },
++  { key: 'customBranding', label: 'Custom branding' },
++  { key: 'prioritySupport', label: 'Priority support' },
++];
++
+ export function AdminPlans() {
+   const [plans, setPlans] = useState<any[]>([]);
+   const [loading, setLoading] = useState(true);
+@@ -49,6 +61,7 @@ export function AdminPlans() {
+             storageGB: bytesToGB(p.storageBytes ?? 1073741824),
+             maxFileSizeMB: bytesToMB(p.maxFileSizeBytes ?? 10485760),
+             isActive: p.isActive !== false,
++            features: { ...(p.features || {}) },
+           };
+         });
+         setPlans(list);
+@@ -74,6 +87,7 @@ export function AdminPlans() {
+           storageBytes: gbToBytes(e.storageGB),
+           maxFileSizeBytes: mbToBytes(e.maxFileSizeMB),
+           isActive: e.isActive,
++          features: e.features || {},
+         }),
+       });
+       const d = await r.json();
+@@ -158,6 +172,28 @@ export function AdminPlans() {
+             </div>
+           </div>
+ 
++          <div style={{ padding: '0 24px 20px' }}>
++            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Features included in this plan</label>
++            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 24px' }}>
++              {FEATURES.map(feat => (
++                <label key={feat.key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
++                  <input
++                    type="checkbox"
++                    checked={!!edits[plan.id]?.features?.[feat.key]}
++                    onChange={e => setEdits(p => ({
++                      ...p,
++                      [plan.id]: {
++                        ...p[plan.id],
++                        features: { ...(p[plan.id]?.features || {}), [feat.key]: e.target.checked },
++                      },
++                    }))}
++                  />
++                  {feat.label}
++                </label>
++              ))}
++            </div>
++          </div>
++
+           <div style={{ padding: '0 24px 24px', display: 'flex', justifyContent: 'flex-end' }}>
+             <button
+               onClick={() => save(plan.id)}

@@ -78,15 +78,14 @@ export function UploadFieldFormPage() {
   });
 
   // Which premium features the merchant's current plan includes. Features
-  // configured here only work on the storefront if the plan allows them, so we
-  // show an "upgrade" hint on the ones the current plan doesn't include.
+  // configured here only work on the storefront if the plan allows them.
   const { data: currentPlan } = useQuery({
     queryKey: ['billing-current'],
     queryFn: () => api.get('/billing/current').then((r) => r.data.data ?? r.data),
   });
   const planFeatures = (currentPlan?.plan?.features ?? {}) as Record<string, boolean>;
   const planName = currentPlan?.plan?.displayName ?? '';
-  const upgradeHint = (feature: string, label: string) =>
+  const upgradeHint = (feature: string) =>
     planFeatures[feature] === false
       ? `Not included in your ${planName} plan — it won't appear on your storefront until you upgrade.`
       : undefined;
@@ -450,13 +449,13 @@ export function UploadFieldFormPage() {
                       label="Enable image cropping"
                       checked={form.enableCropping}
                       onChange={set('enableCropping')}
-                      helpText={upgradeHint('imageEditor', 'Image editor') ?? 'Customers can crop their image before uploading'}
+                      helpText={upgradeHint('imageEditor') ?? 'Customers can crop their image before uploading'}
                     />
                     <Checkbox
                       label="Enable image rotation"
                       checked={form.enableRotation}
                       onChange={set('enableRotation')}
-                      helpText={upgradeHint('imageEditor', 'Image editor')}
+                      helpText={upgradeHint('imageEditor')}
                     />
 
                     <Text variant="headingSm" as="h3">Product Preview</Text>
@@ -464,7 +463,7 @@ export function UploadFieldFormPage() {
                       label="Enable product preview"
                       checked={form.enablePreview}
                       onChange={set('enablePreview')}
-                      helpText={upgradeHint('productPreview', 'Product preview') ?? "Customers see their uploaded image composited onto a product mockup before submitting, so they can confirm it looks right."}
+                      helpText={upgradeHint('productPreview') ?? "Customers see their uploaded image composited onto a product mockup before submitting, so they can confirm it looks right."}
                     />
 
                     {form.enablePreview && (
@@ -483,7 +482,7 @@ export function UploadFieldFormPage() {
                           label="Allow customers to reposition their image"
                           checked={form.allowCustomerPositioning}
                           onChange={set('allowCustomerPositioning')}
-                          helpText={upgradeHint('customerPositioning', 'Customer positioning') ?? "Instead of a fixed placement, customers can drag, resize, and rotate their image on the mockup themselves — like a full design tool."}
+                          helpText={upgradeHint('customerPositioning') ?? "Instead of a fixed placement, customers can drag, resize, and rotate their image on the mockup themselves — like a full design tool."}
                         />
                         <Checkbox
                           label="Allow customers to add their own text"

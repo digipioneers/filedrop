@@ -16,6 +16,18 @@ function extractArray(d: any): any[] {
   return [];
 }
 
+// The per-plan feature flags the storefront/admin enforce. Editing these here
+// controls which features are available on each plan.
+const FEATURES: { key: string; label: string }[] = [
+  { key: 'imageEditor', label: 'Image editor (crop/rotate)' },
+  { key: 'productPreview', label: 'Live product preview' },
+  { key: 'customerPositioning', label: 'Customer can reposition their design' },
+  { key: 'conditionalLogic', label: 'Conditional upload logic (assignment rules)' },
+  { key: 'emailNotifications', label: 'Email notifications' },
+  { key: 'customBranding', label: 'Custom branding' },
+  { key: 'prioritySupport', label: 'Priority support' },
+];
+
 export function AdminPlans() {
   const [plans, setPlans] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,6 +61,7 @@ export function AdminPlans() {
             storageGB: bytesToGB(p.storageBytes ?? 1073741824),
             maxFileSizeMB: bytesToMB(p.maxFileSizeBytes ?? 10485760),
             isActive: p.isActive !== false,
+            features: { ...(p.features || {}) },
           };
         });
         setPlans(list);
@@ -74,6 +87,7 @@ export function AdminPlans() {
           storageBytes: gbToBytes(e.storageGB),
           maxFileSizeBytes: mbToBytes(e.maxFileSizeMB),
           isActive: e.isActive,
+          features: e.features || {},
         }),
       });
       const d = await r.json();
@@ -155,6 +169,28 @@ export function AdminPlans() {
                 <option value="true">Active</option>
                 <option value="false">Inactive</option>
               </select>
+            </div>
+          </div>
+
+          <div style={{ padding: '0 24px 20px' }}>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Features included in this plan</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 24px' }}>
+              {FEATURES.map(feat => (
+                <label key={feat.key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={!!edits[plan.id]?.features?.[feat.key]}
+                    onChange={e => setEdits(p => ({
+                      ...p,
+                      [plan.id]: {
+                        ...p[plan.id],
+                        features: { ...(p[plan.id]?.features || {}), [feat.key]: e.target.checked },
+                      },
+                    }))}
+                  />
+                  {feat.label}
+                </label>
+              ))}
             </div>
           </div>
 
