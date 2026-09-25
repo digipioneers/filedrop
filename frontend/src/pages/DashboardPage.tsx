@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Page, Layout, Card, Text, Grid, Spinner, Banner,
   DataTable, Badge, Button, InlineStack, BlockStack, Box, Link,
@@ -10,9 +10,63 @@ import {
   ResponsiveContainer, BarChart, Bar,
 } from 'recharts';
 import { api } from '../utils/api';
+import { API_URL } from '../utils/config';
 import { formatBytes } from '../utils/format';
 
 const BRAND = '#6A47F5';
+
+/** Self-serve embed snippet for merchants on older themes that can't use app
+ *  blocks — shown right in the app with a Copy button so nobody has to pass a
+ *  code snippet around by hand. */
+function EmbedSnippetCard() {
+  const [copied, setCopied] = useState(false);
+  const snippet =
+    '<div id="cfup-upload-widget"\n' +
+    '  data-shop="{{ shop.permanent_domain }}"\n' +
+    '  data-product-id="{{ product.id }}"\n' +
+    '  data-variant-id="{{ product.selected_or_first_available_variant.id }}"\n' +
+    "  data-product-tags=\"{{ product.tags | join: ',' }}\"\n" +
+    '  data-product-collections="{% for c in product.collections %}{{ c.id }}{% unless forloop.last %},{% endunless %}{% endfor %}"\n' +
+    '  data-product-image="{{ product.selected_or_first_available_variant.featured_image | default: product.featured_image | image_url: width: 1600 }}"\n' +
+    '  data-button-color="#008060"\n' +
+    '  data-button-text="Upload File"\n' +
+    '  data-enable-camera="true"\n' +
+    '  data-cart-url="{{ routes.cart_url }}"\n' +
+    '  data-cart-update-url="{{ routes.cart_update_url }}"></div>\n' +
+    `<script src="${API_URL}/embed/widget.js" defer></script>`;
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(snippet);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* clipboard blocked — merchant can still select the text manually */
+    }
+  };
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text variant="headingMd" as="h2">Using an older theme? (no app blocks)</Text>
+        <Text as="p" tone="subdued">
+          If your theme doesn't let you add the Filedrop block from the theme editor, add it with this
+          snippet instead. In your admin: Online Store → Themes → ⋯ → Edit code → open your product
+          template (e.g. sections/main-product.liquid), paste this just above the “Add to cart” button,
+          then Save. It runs the full widget — upload, editor, live preview and designer.
+        </Text>
+        <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+          <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontSize: 12, fontFamily: 'monospace' }}>
+            {snippet}
+          </pre>
+        </Box>
+        <InlineStack>
+          <Button variant="primary" onClick={copy}>{copied ? 'Copied!' : 'Copy snippet'}</Button>
+        </InlineStack>
+      </BlockStack>
+    </Card>
+  );
+}
 
 // Resolve the current shop domain (e.g. "my-store.myshopify.com"). App Bridge
 // v4 (loaded via CDN) exposes it on window.shopify.config.shop; fall back to
@@ -385,6 +439,10 @@ export function DashboardPage() {
               ])}
             />
           </Card>
+        </Layout.Section>
+
+        <Layout.Section>
+          <EmbedSnippetCard />
         </Layout.Section>
       </Layout>
     </Page>

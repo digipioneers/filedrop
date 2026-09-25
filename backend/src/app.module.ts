@@ -26,6 +26,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SaaSModule } from './saas/saas.module';
 import { AdminModule } from './admin/admin.module';
+import { EmbedModule } from './embed/embed.module';
 
 @Module({
   controllers: [AppController],
@@ -61,6 +62,7 @@ import { AdminModule } from './admin/admin.module';
     NotificationsModule,
     SaaSModule,
     AdminModule,
+    EmbedModule,
   ],
 })
 export class AppModule {}
