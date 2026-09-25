@@ -221,4 +221,20 @@ export class WebhooksController {
     await this.webhooksService.handleProductUpdate(shop, body);
     return { ok: true };
   }
+
+  // New products added after install must be cached too, or they won't appear
+  // in the admin product picker or match collection assignments. The upsert
+  // handler works for creates as well.
+  @Post('products/create')
+  @HttpCode(200)
+  async productsCreate(
+    @Req() req: any,
+    @Headers('x-shopify-hmac-sha256') hmac: string,
+    @Headers('x-shopify-shop-domain') shop: string,
+    @Body() body: any,
+  ) {
+    this.verifyWebhook(req, hmac, 'products/create', shop);
+    await this.webhooksService.handleProductUpdate(shop, body);
+    return { ok: true };
+  }
 }

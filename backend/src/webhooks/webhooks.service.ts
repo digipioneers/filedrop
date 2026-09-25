@@ -69,6 +69,7 @@ export class WebhooksService {
       { topic: 'orders/create',          address: `${appUrl}/api/v1/webhooks/orders/create` },
       { topic: 'orders/updated',         address: `${appUrl}/api/v1/webhooks/orders/updated` },
       { topic: 'products/update',        address: `${appUrl}/api/v1/webhooks/products/update` },
+      { topic: 'products/create',        address: `${appUrl}/api/v1/webhooks/products/create` },
     ];
 
     for (const webhook of webhooks) {

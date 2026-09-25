@@ -52,11 +52,13 @@ export class StorefrontController {
     @Query('productId') productId?: string,
     @Query('variantId') variantId?: string,
     @Query('tags') tags?: string,
+    @Query('collections') collections?: string,
   ) {
     const shopOrMerchantId = shop || merchantId;
     if (!shopOrMerchantId) throw new BadRequestException('shop or merchantId is required');
-    const tagList = tags ? tags.split(',').map(t => t.trim()) : [];
-    return this.storefrontService.getFieldsForProduct(shopOrMerchantId, productId, variantId, tagList);
+    const tagList = tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : [];
+    const collectionList = collections ? collections.split(',').map(c => c.trim()).filter(Boolean) : [];
+    return this.storefrontService.getFieldsForProduct(shopOrMerchantId, productId, variantId, tagList, collectionList);
   }
 
   /**

@@ -68,7 +68,7 @@ export class StorefrontService {
     return raw;
   }
 
-  async getFieldsForProduct(shopOrMerchantId: string, productId?: string, variantId?: string, tags: string[] = []) {
+  async getFieldsForProduct(shopOrMerchantId: string, productId?: string, variantId?: string, tags: string[] = [], collections: string[] = []) {
     const merchantId = await this.resolveMerchantId(shopOrMerchantId);
     const merchant = await this.merchantRepo.findOne({ where: { id: merchantId, isActive: true } });
     if (!merchant) throw new NotFoundException('Store not found');
@@ -89,18 +89,20 @@ export class StorefrontService {
       order: { sortOrder: 'ASC' },
     });
 
-    // The widget only sends productId + variantId, so derive the product's
-    // collections and tags from our cached catalogue. This is what makes
-    // COLLECTION and TAG assignment actually work on the storefront.
-    let productCollectionIds: string[] = [];
+    // Start from what the widget sent directly (from Liquid): the product's
+    // tags and collection IDs. This makes TAG and COLLECTION assignment work on
+    // ANY product — including ones added after install that aren't in our cached
+    // catalogue yet. We still merge in the cached values as a fallback.
+    let productCollectionIds: string[] = Array.isArray(collections) ? [...collections] : [];
     let productTags: string[] = Array.isArray(tags) ? [...tags] : [];
     if (productId) {
       const product = await this.productRepo.findOne({
         where: { merchantId, shopifyProductId: String(productId) },
       });
       if (product) {
-        productCollectionIds = (Array.isArray(product.collections) ? product.collections : [])
+        const cachedCollections = (Array.isArray(product.collections) ? product.collections : [])
           .map((c: any) => String(c.id));
+        productCollectionIds = [...new Set([...productCollectionIds, ...cachedCollections])];
         if (Array.isArray(product.tags)) {
           productTags = [...new Set([...productTags, ...product.tags])];
         }

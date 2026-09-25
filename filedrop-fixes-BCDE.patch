@@ -1,0 +1,258 @@
+diff --git a/backend/src/storefront/storefront.controller.ts b/backend/src/storefront/storefront.controller.ts
+index 8dffe72..84db483 100644
+--- a/backend/src/storefront/storefront.controller.ts
++++ b/backend/src/storefront/storefront.controller.ts
+@@ -52,11 +52,13 @@ export class StorefrontController {
+     @Query('productId') productId?: string,
+     @Query('variantId') variantId?: string,
+     @Query('tags') tags?: string,
++    @Query('collections') collections?: string,
+   ) {
+     const shopOrMerchantId = shop || merchantId;
+     if (!shopOrMerchantId) throw new BadRequestException('shop or merchantId is required');
+-    const tagList = tags ? tags.split(',').map(t => t.trim()) : [];
+-    return this.storefrontService.getFieldsForProduct(shopOrMerchantId, productId, variantId, tagList);
++    const tagList = tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : [];
++    const collectionList = collections ? collections.split(',').map(c => c.trim()).filter(Boolean) : [];
++    return this.storefrontService.getFieldsForProduct(shopOrMerchantId, productId, variantId, tagList, collectionList);
+   }
+ 
+   /**
+diff --git a/backend/src/storefront/storefront.service.ts b/backend/src/storefront/storefront.service.ts
+index d1ae03d..f22a328 100644
+--- a/backend/src/storefront/storefront.service.ts
++++ b/backend/src/storefront/storefront.service.ts
+@@ -68,7 +68,7 @@ export class StorefrontService {
+     return raw;
+   }
+ 
+-  async getFieldsForProduct(shopOrMerchantId: string, productId?: string, variantId?: string, tags: string[] = []) {
++  async getFieldsForProduct(shopOrMerchantId: string, productId?: string, variantId?: string, tags: string[] = [], collections: string[] = []) {
+     const merchantId = await this.resolveMerchantId(shopOrMerchantId);
+     const merchant = await this.merchantRepo.findOne({ where: { id: merchantId, isActive: true } });
+     if (!merchant) throw new NotFoundException('Store not found');
+@@ -89,18 +89,20 @@ export class StorefrontService {
+       order: { sortOrder: 'ASC' },
+     });
+ 
+-    // The widget only sends productId + variantId, so derive the product's
+-    // collections and tags from our cached catalogue. This is what makes
+-    // COLLECTION and TAG assignment actually work on the storefront.
+-    let productCollectionIds: string[] = [];
++    // Start from what the widget sent directly (from Liquid): the product's
++    // tags and collection IDs. This makes TAG and COLLECTION assignment work on
++    // ANY product — including ones added after install that aren't in our cached
++    // catalogue yet. We still merge in the cached values as a fallback.
++    let productCollectionIds: string[] = Array.isArray(collections) ? [...collections] : [];
+     let productTags: string[] = Array.isArray(tags) ? [...tags] : [];
+     if (productId) {
+       const product = await this.productRepo.findOne({
+         where: { merchantId, shopifyProductId: String(productId) },
+       });
+       if (product) {
+-        productCollectionIds = (Array.isArray(product.collections) ? product.collections : [])
++        const cachedCollections = (Array.isArray(product.collections) ? product.collections : [])
+           .map((c: any) => String(c.id));
++        productCollectionIds = [...new Set([...productCollectionIds, ...cachedCollections])];
+         if (Array.isArray(product.tags)) {
+           productTags = [...new Set([...productTags, ...product.tags])];
+         }
+diff --git a/backend/src/webhooks/webhooks.controller.ts b/backend/src/webhooks/webhooks.controller.ts
+index 7f2d4fc..9741ec4 100644
+--- a/backend/src/webhooks/webhooks.controller.ts
++++ b/backend/src/webhooks/webhooks.controller.ts
+@@ -221,4 +221,20 @@ export class WebhooksController {
+     await this.webhooksService.handleProductUpdate(shop, body);
+     return { ok: true };
+   }
++
++  // New products added after install must be cached too, or they won't appear
++  // in the admin product picker or match collection assignments. The upsert
++  // handler works for creates as well.
++  @Post('products/create')
++  @HttpCode(200)
++  async productsCreate(
++    @Req() req: any,
++    @Headers('x-shopify-hmac-sha256') hmac: string,
++    @Headers('x-shopify-shop-domain') shop: string,
++    @Body() body: any,
++  ) {
++    this.verifyWebhook(req, hmac, 'products/create', shop);
++    await this.webhooksService.handleProductUpdate(shop, body);
++    return { ok: true };
++  }
+ }
+diff --git a/backend/src/webhooks/webhooks.service.ts b/backend/src/webhooks/webhooks.service.ts
+index 529832b..23452d0 100644
+--- a/backend/src/webhooks/webhooks.service.ts
++++ b/backend/src/webhooks/webhooks.service.ts
+@@ -69,6 +69,7 @@ export class WebhooksService {
+       { topic: 'orders/create',          address: `${appUrl}/api/v1/webhooks/orders/create` },
+       { topic: 'orders/updated',         address: `${appUrl}/api/v1/webhooks/orders/updated` },
+       { topic: 'products/update',        address: `${appUrl}/api/v1/webhooks/products/update` },
++      { topic: 'products/create',        address: `${appUrl}/api/v1/webhooks/products/create` },
+     ];
+ 
+     for (const webhook of webhooks) {
+diff --git a/extensions/theme-extension/blocks/upload-widget.liquid b/extensions/theme-extension/blocks/upload-widget.liquid
+index 92cb4de..12102c4 100644
+--- a/extensions/theme-extension/blocks/upload-widget.liquid
++++ b/extensions/theme-extension/blocks/upload-widget.liquid
+@@ -9,6 +9,8 @@
+   data-shop="{{ shop.permanent_domain }}"
+   data-product-id="{{ product.id }}"
+   data-variant-id="{{ product.selected_or_first_available_variant.id }}"
++  data-product-tags="{{ product.tags | join: ',' }}"
++  data-product-collections="{% for c in product.collections %}{{ c.id }}{% unless forloop.last %},{% endunless %}{% endfor %}"
+   data-product-image="{{ product.selected_or_first_available_variant.featured_image | default: product.featured_image | image_url: width: 1600 }}"
+   data-api-url="{{ block.settings.api_url }}"
+   data-button-color="{{ block.settings.button_color }}"
+@@ -320,6 +322,8 @@
+   const BTN_COLOR    = widget.dataset.buttonColor || '#008060';
+   const BTN_TEXT     = widget.dataset.buttonText || 'Upload File';
+   const ENABLE_CAMERA = widget.dataset.enableCamera === 'true';
++  const PRODUCT_TAGS = widget.dataset.productTags || '';
++  const PRODUCT_COLLECTIONS = widget.dataset.productCollections || '';
+   const container    = document.getElementById('cfup-fields-container');
+ 
+   // Shopify cart routes, resolved by Liquid so they carry any subfolder/locale
+@@ -800,36 +804,41 @@
+       if (designerCanvas) { designerCanvas.dispose(); }
+       designerCanvas = new fabric.Canvas('cfup-designer-canvas', { width: canvasW, height: canvasH });
+ 
+-      // Compute the designated print area (in canvas pixels) and draw a dashed
+-      // outline so the customer can see where their design will print — and so
+-      // we can clamp their art/text inside it (like Spreadshirt's print area).
+-      const pa = initialPlacement || { x: 25, y: 25, width: 50, height: 50 };
+-      designerPrintArea = {
+-        left: (pa.x / 100) * canvasW,
+-        top: (pa.y / 100) * canvasH,
+-        width: (pa.width / 100) * canvasW,
+-        height: (pa.height / 100) * canvasH,
+-      };
+-      designerAreaRect = new fabric.Rect({
+-        left: designerPrintArea.left,
+-        top: designerPrintArea.top,
+-        width: designerPrintArea.width,
+-        height: designerPrintArea.height,
+-        fill: 'transparent',
+-        stroke: '#008060',
+-        strokeDashArray: [6, 4],
+-        strokeWidth: 1.5,
+-        selectable: false,
+-        evented: false,
+-        excludeFromExport: true,
+-      });
+-      designerCanvas.add(designerAreaRect);
++      // Only draw a print-area box + clamp the design when a placement is given
++      // (custom-mockup mode). In "use the product image" mode there is no
++      // designated print area, so the customer positions/sizes their image
++      // freely across the whole product — no box, no clamping.
++      designerPrintArea = null;
++      designerAreaRect = null;
++      if (initialPlacement) {
++        const pa = initialPlacement;
++        designerPrintArea = {
++          left: (pa.x / 100) * canvasW,
++          top: (pa.y / 100) * canvasH,
++          width: (pa.width / 100) * canvasW,
++          height: (pa.height / 100) * canvasH,
++        };
++        designerAreaRect = new fabric.Rect({
++          left: designerPrintArea.left,
++          top: designerPrintArea.top,
++          width: designerPrintArea.width,
++          height: designerPrintArea.height,
++          fill: 'transparent',
++          stroke: '#008060',
++          strokeDashArray: [6, 4],
++          strokeWidth: 1.5,
++          selectable: false,
++          evented: false,
++          excludeFromExport: true,
++        });
++        designerCanvas.add(designerAreaRect);
+ 
+-      // Clamp any drag/resize/rotate back inside the print area, live.
+-      designerCanvas.on('object:moving', (e) => constrainToArea(e.target));
+-      designerCanvas.on('object:scaling', (e) => constrainToArea(e.target));
+-      designerCanvas.on('object:rotating', (e) => constrainToArea(e.target));
+-      designerCanvas.on('object:modified', (e) => { constrainToArea(e.target); designerCanvas.renderAll(); });
++        // Clamp any drag/resize/rotate back inside the print area, live.
++        designerCanvas.on('object:moving', (e) => constrainToArea(e.target));
++        designerCanvas.on('object:scaling', (e) => constrainToArea(e.target));
++        designerCanvas.on('object:rotating', (e) => constrainToArea(e.target));
++        designerCanvas.on('object:modified', (e) => { constrainToArea(e.target); designerCanvas.renderAll(); });
++      }
+ 
+       fabric.Image.fromURL(templateUrl, (bgImg) => {
+         if (!bgImg) return; // image blocked/failed — continue without a backdrop
+@@ -838,7 +847,9 @@
+       }, { crossOrigin: 'anonymous' });
+ 
+       if (file && file.type.startsWith('image/')) {
+-        const p = initialPlacement || { x: 25, y: 25, width: 50, height: 50 };
++        // Constrained mode: fit into the print area. Free mode (product image):
++        // start centred at ~40% of the canvas so there's room to move/resize.
++        const p = initialPlacement || { x: 30, y: 30, width: 40, height: 40 };
+         const fileUrl = URL.createObjectURL(file);
+         fabric.Image.fromURL(fileUrl, (img) => {
+           const targetW = (p.width / 100) * canvasW;
+@@ -855,7 +866,7 @@
+             borderColor: '#008060',
+           });
+           designerCanvas.add(img);
+-          constrainToArea(img);
++          if (designerPrintArea) constrainToArea(img);
+           designerCanvas.setActiveObject(img);
+           designerCanvas.renderAll();
+           URL.revokeObjectURL(fileUrl);
+@@ -1081,6 +1092,8 @@
+       url.searchParams.set('shop', SHOP);
+       url.searchParams.set('productId', PRODUCT_ID);
+       if (variantId) url.searchParams.set('variantId', variantId);
++      if (PRODUCT_TAGS) url.searchParams.set('tags', PRODUCT_TAGS);
++      if (PRODUCT_COLLECTIONS) url.searchParams.set('collections', PRODUCT_COLLECTIONS);
+ 
+       const res = await fetch(url.toString());
+       if (!res.ok) {
+@@ -1311,17 +1324,21 @@
+ 
+         if (field.enablePreview && canvasImage && field.allowCustomerPositioning) {
+           // Full designer: customer drags/resizes/rotates their image and
+-          // can add text — this replaces the fixed compositing preview.
++          // can add text. The print-area box only applies when a custom mockup
++          // with a defined placement is used; on the plain product image there
++          // is no designated area, so the customer positions freely (no box).
++          const placementForDesigner = useCustomMockup ? (field.previewPlacement || null) : null;
+           openDesigner(
+             canvasImage,
+-            field.previewPlacement,
++            placementForDesigner,
+             f,
+             { allowText: !!field.allowCustomerText },
+             (designedFile) => uploadFile(designedFile),
+           );
+         } else if (field.enablePreview && canvasImage) {
+           // Simpler mode: fixed placement, preview-only confirmation.
+-          openPreview(canvasImage, field.previewPlacement, f, (confirmedFile) => uploadFile(confirmedFile));
++          const placementForPreview = useCustomMockup ? field.previewPlacement : null;
++          openPreview(canvasImage, placementForPreview, f, (confirmedFile) => uploadFile(confirmedFile));
+         } else {
+           uploadFile(f);
+         }
+diff --git a/shopify.app.toml b/shopify.app.toml
+index 5de1675..9295952 100644
+--- a/shopify.app.toml
++++ b/shopify.app.toml
+@@ -37,6 +37,10 @@ api_version = "2026-07"
+   topics = [ "products/update" ]
+   uri = "/api/v1/webhooks/products/update"
+ 
++  [[webhooks.subscriptions]]
++  topics = [ "products/create" ]
++  uri = "/api/v1/webhooks/products/create"
++
+   [[webhooks.subscriptions]]
+   compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+   uri = "/api/v1/gdpr/webhooks"
