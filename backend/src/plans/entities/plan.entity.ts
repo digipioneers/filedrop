@@ -44,6 +44,15 @@ export class Plan {
   @Column({ type: 'json' })
   features: any;
 
+  // Fully editable, per-plan feature list managed from the super-admin:
+  //   [{ label: string, capability?: string }]
+  // `label` is shown on the app's Plan & Billing page; `capability` (optional)
+  // ties a row to a real gated capability (imageEditor / productPreview /
+  // customerPositioning / ...). The boolean `features` map above is kept in
+  // sync (derived from the capabilities here) so gating logic is unchanged.
+  @Column({ name: 'feature_list', type: 'json', nullable: true })
+  featureList: any;
+
   @Column({ name: 'is_active', default: true })
   isActive: boolean;
 

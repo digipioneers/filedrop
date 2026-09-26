@@ -37,9 +37,17 @@ function buildPlanFeatureList(plan: any): string[] {
   lines.push(`${formatBytes(plan.storageBytes)} storage`);
   lines.push(`${formatBytes(plan.maxFileSizeBytes)} max file size`);
 
-  const features = plan.features || {};
-  for (const key of Object.keys(FEATURE_LABELS)) {
-    if (features[key]) lines.push(FEATURE_LABELS[key]);
+  // Prefer the super-admin-managed feature list (labels are whatever the admin
+  // typed). Fall back to the derived boolean map for plans not yet edited.
+  if (Array.isArray(plan.featureList) && plan.featureList.length > 0) {
+    for (const f of plan.featureList) {
+      if (f && f.label) lines.push(f.label);
+    }
+  } else {
+    const features = plan.features || {};
+    for (const key of Object.keys(FEATURE_LABELS)) {
+      if (features[key]) lines.push(FEATURE_LABELS[key]);
+    }
   }
 
   return lines;

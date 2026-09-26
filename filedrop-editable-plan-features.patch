@@ -1,0 +1,285 @@
+diff --git a/backend/src/admin/admin.service.ts b/backend/src/admin/admin.service.ts
+index bddd1c1..ea463a8 100644
+--- a/backend/src/admin/admin.service.ts
++++ b/backend/src/admin/admin.service.ts
+@@ -1,4 +1,4 @@
+-import { Injectable, NotFoundException } from '@nestjs/common';
++import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+ import { InjectRepository } from '@nestjs/typeorm';
+ import { Repository } from 'typeorm';
+ import { Plan } from '../plans/entities/plan.entity';
+@@ -30,6 +30,7 @@ export class AdminService {
+     storageBytes?: number;
+     maxFileSizeBytes?: number;
+     features?: any;
++    featureList?: Array<{ label: string; capability?: string }>;
+     isActive?: boolean;
+     sortOrder?: number;
+   }) {
+@@ -42,14 +43,88 @@ export class AdminService {
+     if (dto.uploadsPerMonth !== undefined) plan.uploadsPerMonth = dto.uploadsPerMonth;
+     if (dto.storageBytes !== undefined) plan.storageBytes    = dto.storageBytes;
+     if (dto.maxFileSizeBytes !== undefined) plan.maxFileSizeBytes = dto.maxFileSizeBytes;
+-    if (dto.features     !== undefined) plan.features        = dto.features;
+     if (dto.isActive     !== undefined) plan.isActive        = dto.isActive;
+     if (dto.sortOrder    !== undefined) plan.sortOrder       = dto.sortOrder;
+ 
++    // Editable feature list is the source of truth. Persist it AND recompute the
++    // boolean `features` map (from each row's capability) so gating logic — which
++    // reads `features` — stays correct without changes.
++    if (dto.featureList !== undefined) {
++      const list = (dto.featureList || []).filter((f) => f && (f.label || f.capability));
++      plan.featureList = list;
++      const caps: Record<string, boolean> = {};
++      for (const f of list) if (f.capability) caps[f.capability] = true;
++      plan.features = caps;
++    } else if (dto.features !== undefined) {
++      // Backward compatible: still accept a raw boolean map.
++      plan.features = dto.features;
++    }
++
+     const saved = await this.planRepo.save(plan);
+     return saved;
+   }
+ 
++  /** Create a brand-new plan (super-admin). Generates a unique handle. */
++  async createPlan(dto: {
++    displayName?: string;
++    monthlyPrice?: number;
++    uploadsPerMonth?: number;
++    storageBytes?: number;
++    maxFileSizeBytes?: number;
++    features?: any;
++    featureList?: Array<{ label: string; capability?: string }>;
++    isActive?: boolean;
++    sortOrder?: number;
++  }) {
++    const display = (dto.displayName || 'New Plan').trim();
++    const baseHandle =
++      display.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'plan';
++    let name = baseHandle;
++    let i = 1;
++    while (await this.planRepo.findOne({ where: { name } })) {
++      name = `${baseHandle}-${i++}`;
++    }
++
++    const list = (dto.featureList || []).filter((f) => f && (f.label || f.capability));
++    const caps: Record<string, boolean> = {};
++    for (const ff of list) if (ff.capability) caps[ff.capability] = true;
++
++    const plan = this.planRepo.create({
++      name,
++      displayName: display,
++      monthlyPrice: dto.monthlyPrice != null ? Number(dto.monthlyPrice) : 0,
++      uploadsPerMonth: dto.uploadsPerMonth != null ? Number(dto.uploadsPerMonth) : 100,
++      storageBytes: dto.storageBytes != null ? Number(dto.storageBytes) : 2 * 1024 * 1024 * 1024,
++      maxFileSizeBytes: dto.maxFileSizeBytes != null ? Number(dto.maxFileSizeBytes) : 10 * 1024 * 1024,
++      features: dto.features || caps,
++      featureList: list,
++      isActive: dto.isActive !== false,
++      sortOrder: dto.sortOrder != null ? Number(dto.sortOrder) : 99,
++      isDefault: false,
++    });
++    return this.planRepo.save(plan);
++  }
++
++  /**
++   * Delete a plan (super-admin). The default (free) plan can never be deleted,
++   * and a plan that still has subscriptions is deactivated instead of removed.
++   */
++  async deletePlan(id: string): Promise<{ deleted: boolean; deactivated: boolean }> {
++    const plan = await this.planRepo.findOne({ where: { id } });
++    if (!plan) throw new NotFoundException('Plan not found');
++    if (plan.isDefault) {
++      throw new BadRequestException('The default (free) plan cannot be deleted.');
++    }
++    const subCount = await this.subRepo.count({ where: { planId: id } });
++    if (subCount > 0) {
++      plan.isActive = false;
++      await this.planRepo.save(plan);
++      return { deleted: false, deactivated: true };
++    }
++    await this.planRepo.delete(id);
++    return { deleted: true, deactivated: false };
++  }
++
+   // ── Merchants ────────────────────────────────────────────────────────────
+ 
+   async getMerchants() {
+diff --git a/backend/src/plans/entities/plan.entity.ts b/backend/src/plans/entities/plan.entity.ts
+index 3b94775..d388098 100644
+--- a/backend/src/plans/entities/plan.entity.ts
++++ b/backend/src/plans/entities/plan.entity.ts
+@@ -44,6 +44,15 @@ export class Plan {
+   @Column({ type: 'json' })
+   features: any;
+ 
++  // Fully editable, per-plan feature list managed from the super-admin:
++  //   [{ label: string, capability?: string }]
++  // `label` is shown on the app's Plan & Billing page; `capability` (optional)
++  // ties a row to a real gated capability (imageEditor / productPreview /
++  // customerPositioning / ...). The boolean `features` map above is kept in
++  // sync (derived from the capabilities here) so gating logic is unchanged.
++  @Column({ name: 'feature_list', type: 'json', nullable: true })
++  featureList: any;
++
+   @Column({ name: 'is_active', default: true })
+   isActive: boolean;
+ 
+diff --git a/frontend/src/pages/BillingPage.tsx b/frontend/src/pages/BillingPage.tsx
+index 154ad00..28b0c33 100644
+--- a/frontend/src/pages/BillingPage.tsx
++++ b/frontend/src/pages/BillingPage.tsx
+@@ -37,9 +37,17 @@ function buildPlanFeatureList(plan: any): string[] {
+   lines.push(`${formatBytes(plan.storageBytes)} storage`);
+   lines.push(`${formatBytes(plan.maxFileSizeBytes)} max file size`);
+ 
+-  const features = plan.features || {};
+-  for (const key of Object.keys(FEATURE_LABELS)) {
+-    if (features[key]) lines.push(FEATURE_LABELS[key]);
++  // Prefer the super-admin-managed feature list (labels are whatever the admin
++  // typed). Fall back to the derived boolean map for plans not yet edited.
++  if (Array.isArray(plan.featureList) && plan.featureList.length > 0) {
++    for (const f of plan.featureList) {
++      if (f && f.label) lines.push(f.label);
++    }
++  } else {
++    const features = plan.features || {};
++    for (const key of Object.keys(FEATURE_LABELS)) {
++      if (features[key]) lines.push(FEATURE_LABELS[key]);
++    }
+   }
+ 
+   return lines;
+diff --git a/frontend/src/pages/admin/AdminPlans.tsx b/frontend/src/pages/admin/AdminPlans.tsx
+index eda5ad1..a9649e7 100644
+--- a/frontend/src/pages/admin/AdminPlans.tsx
++++ b/frontend/src/pages/admin/AdminPlans.tsx
+@@ -28,6 +28,20 @@ const FEATURES: { key: string; label: string }[] = [
+   { key: 'prioritySupport', label: 'Priority support' },
+ ];
+ 
++// Optional capability a feature row can be tied to. Picking one makes the row
++// actually unlock that feature on the plan (gated by the app). Leaving it blank
++// makes the row display-only marketing text.
++const CAPABILITIES: { value: string; label: string }[] = [
++  { value: '', label: '— display only —' },
++  { value: 'imageEditor', label: 'Unlocks: Image editor' },
++  { value: 'productPreview', label: 'Unlocks: Live product preview' },
++  { value: 'customerPositioning', label: 'Unlocks: Customer positioning' },
++  { value: 'conditionalLogic', label: 'Unlocks: Conditional upload logic' },
++  { value: 'emailNotifications', label: 'Unlocks: Email notifications' },
++  { value: 'customBranding', label: 'Unlocks: Custom branding' },
++  { value: 'prioritySupport', label: 'Unlocks: Priority support' },
++];
++
+ export function AdminPlans() {
+   const [plans, setPlans] = useState<any[]>([]);
+   const [loading, setLoading] = useState(true);
+@@ -62,6 +76,13 @@ export function AdminPlans() {
+             maxFileSizeMB: bytesToMB(p.maxFileSizeBytes ?? 10485760),
+             isActive: p.isActive !== false,
+             features: { ...(p.features || {}) },
++            // Editable feature rows. Use the saved list if present, otherwise
++            // convert the plan's current boolean features into editable rows so
++            // the admin sees today's features immediately.
++            featureList:
++              Array.isArray(p.featureList) && p.featureList.length
++                ? p.featureList.map((f: any) => ({ label: f.label || '', capability: f.capability || '' }))
++                : FEATURES.filter((ft) => (p.features || {})[ft.key]).map((ft) => ({ label: ft.label, capability: ft.key })),
+           };
+         });
+         setPlans(list);
+@@ -87,7 +108,7 @@ export function AdminPlans() {
+           storageBytes: gbToBytes(e.storageGB),
+           maxFileSizeBytes: mbToBytes(e.maxFileSizeMB),
+           isActive: e.isActive,
+-          features: e.features || {},
++          featureList: (e.featureList || []).filter((f: any) => f && (f.label || f.capability)),
+         }),
+       });
+       const d = await r.json();
+@@ -136,6 +157,21 @@ export function AdminPlans() {
+     } catch (err: any) { setToast(`Error: ${err.message}`); }
+   };
+ 
++  const addFeature = (id: string) =>
++    setEdits(p => ({ ...p, [id]: { ...p[id], featureList: [...(p[id]?.featureList || []), { label: '', capability: '' }] } }));
++  const updateFeature = (id: string, idx: number, patch: any) =>
++    setEdits(p => {
++      const list = [...(p[id]?.featureList || [])];
++      list[idx] = { ...list[idx], ...patch };
++      return { ...p, [id]: { ...p[id], featureList: list } };
++    });
++  const removeFeature = (id: string, idx: number) =>
++    setEdits(p => {
++      const list = [...(p[id]?.featureList || [])];
++      list.splice(idx, 1);
++      return { ...p, [id]: { ...p[id], featureList: list } };
++    });
++
+   const f = { fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif' };
+ 
+   if (loading) return <div style={{ ...f, padding: 40, textAlign: 'center', color: '#637381' }}>Loading plans...</div>;
+@@ -221,25 +257,42 @@ export function AdminPlans() {
+           </div>
+ 
+           <div style={{ padding: '0 24px 20px' }}>
+-            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Features included in this plan</label>
+-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 24px' }}>
+-              {FEATURES.map(feat => (
+-                <label key={feat.key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+-                  <input
+-                    type="checkbox"
+-                    checked={!!edits[plan.id]?.features?.[feat.key]}
+-                    onChange={e => setEdits(p => ({
+-                      ...p,
+-                      [plan.id]: {
+-                        ...p[plan.id],
+-                        features: { ...(p[plan.id]?.features || {}), [feat.key]: e.target.checked },
+-                      },
+-                    }))}
+-                  />
+-                  {feat.label}
+-                </label>
+-              ))}
+-            </div>
++            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Features for this plan</label>
++            <p style={{ fontSize: 12, color: '#637381', margin: '0 0 12px' }}>
++              These show on the app's Plan &amp; Billing page. Pick a capability to also <em>unlock</em> that feature on this plan; leave “display only” for marketing text.
++            </p>
++            {(edits[plan.id]?.featureList || []).map((feat: any, idx: number) => (
++              <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
++                <input
++                  type="text"
++                  value={feat.label}
++                  placeholder="Feature label shown to merchants"
++                  onChange={e => updateFeature(plan.id, idx, { label: e.target.value })}
++                  style={{ flex: 1, padding: '8px 10px', border: '1px solid #c4cdd5', borderRadius: 6, fontSize: 13 }}
++                />
++                <select
++                  value={feat.capability || ''}
++                  onChange={e => updateFeature(plan.id, idx, { capability: e.target.value })}
++                  title="Optionally tie this row to a real feature the app enforces"
++                  style={{ padding: '8px 10px', border: '1px solid #c4cdd5', borderRadius: 6, fontSize: 13, minWidth: 230 }}
++                >
++                  {CAPABILITIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
++                </select>
++                <button
++                  onClick={() => removeFeature(plan.id, idx)}
++                  title="Delete this feature"
++                  style={{ background: '#fff', color: '#de3618', border: '1px solid #de3618', borderRadius: 6, padding: '8px 12px', cursor: 'pointer', fontSize: 14, lineHeight: 1 }}
++                >
++                  ×
++                </button>
++              </div>
++            ))}
++            <button
++              onClick={() => addFeature(plan.id)}
++              style={{ background: '#f4f6f8', border: '1px solid #c4cdd5', borderRadius: 6, padding: '8px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 500, marginTop: 4 }}
++            >
++              + Add feature
++            </button>
+           </div>
+ 
+           <div style={{ padding: '0 24px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

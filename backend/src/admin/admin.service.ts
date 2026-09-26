@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Plan } from '../plans/entities/plan.entity';
@@ -30,6 +30,7 @@ export class AdminService {
     storageBytes?: number;
     maxFileSizeBytes?: number;
     features?: any;
+    featureList?: Array<{ label: string; capability?: string }>;
     isActive?: boolean;
     sortOrder?: number;
   }) {
@@ -42,12 +43,86 @@ export class AdminService {
     if (dto.uploadsPerMonth !== undefined) plan.uploadsPerMonth = dto.uploadsPerMonth;
     if (dto.storageBytes !== undefined) plan.storageBytes    = dto.storageBytes;
     if (dto.maxFileSizeBytes !== undefined) plan.maxFileSizeBytes = dto.maxFileSizeBytes;
-    if (dto.features     !== undefined) plan.features        = dto.features;
     if (dto.isActive     !== undefined) plan.isActive        = dto.isActive;
     if (dto.sortOrder    !== undefined) plan.sortOrder       = dto.sortOrder;
 
+    // Editable feature list is the source of truth. Persist it AND recompute the
+    // boolean `features` map (from each row's capability) so gating logic — which
+    // reads `features` — stays correct without changes.
+    if (dto.featureList !== undefined) {
+      const list = (dto.featureList || []).filter((f) => f && (f.label || f.capability));
+      plan.featureList = list;
+      const caps: Record<string, boolean> = {};
+      for (const f of list) if (f.capability) caps[f.capability] = true;
+      plan.features = caps;
+    } else if (dto.features !== undefined) {
+      // Backward compatible: still accept a raw boolean map.
+      plan.features = dto.features;
+    }
+
     const saved = await this.planRepo.save(plan);
     return saved;
+  }
+
+  /** Create a brand-new plan (super-admin). Generates a unique handle. */
+  async createPlan(dto: {
+    displayName?: string;
+    monthlyPrice?: number;
+    uploadsPerMonth?: number;
+    storageBytes?: number;
+    maxFileSizeBytes?: number;
+    features?: any;
+    featureList?: Array<{ label: string; capability?: string }>;
+    isActive?: boolean;
+    sortOrder?: number;
+  }) {
+    const display = (dto.displayName || 'New Plan').trim();
+    const baseHandle =
+      display.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'plan';
+    let name = baseHandle;
+    let i = 1;
+    while (await this.planRepo.findOne({ where: { name } })) {
+      name = `${baseHandle}-${i++}`;
+    }
+
+    const list = (dto.featureList || []).filter((f) => f && (f.label || f.capability));
+    const caps: Record<string, boolean> = {};
+    for (const ff of list) if (ff.capability) caps[ff.capability] = true;
+
+    const plan = this.planRepo.create({
+      name,
+      displayName: display,
+      monthlyPrice: dto.monthlyPrice != null ? Number(dto.monthlyPrice) : 0,
+      uploadsPerMonth: dto.uploadsPerMonth != null ? Number(dto.uploadsPerMonth) : 100,
+      storageBytes: dto.storageBytes != null ? Number(dto.storageBytes) : 2 * 1024 * 1024 * 1024,
+      maxFileSizeBytes: dto.maxFileSizeBytes != null ? Number(dto.maxFileSizeBytes) : 10 * 1024 * 1024,
+      features: dto.features || caps,
+      featureList: list,
+      isActive: dto.isActive !== false,
+      sortOrder: dto.sortOrder != null ? Number(dto.sortOrder) : 99,
+      isDefault: false,
+    });
+    return this.planRepo.save(plan);
+  }
+
+  /**
+   * Delete a plan (super-admin). The default (free) plan can never be deleted,
+   * and a plan that still has subscriptions is deactivated instead of removed.
+   */
+  async deletePlan(id: string): Promise<{ deleted: boolean; deactivated: boolean }> {
+    const plan = await this.planRepo.findOne({ where: { id } });
+    if (!plan) throw new NotFoundException('Plan not found');
+    if (plan.isDefault) {
+      throw new BadRequestException('The default (free) plan cannot be deleted.');
+    }
+    const subCount = await this.subRepo.count({ where: { planId: id } });
+    if (subCount > 0) {
+      plan.isActive = false;
+      await this.planRepo.save(plan);
+      return { deleted: false, deactivated: true };
+    }
+    await this.planRepo.delete(id);
+    return { deleted: true, deactivated: false };
   }
 
   // ── Merchants ────────────────────────────────────────────────────────────
