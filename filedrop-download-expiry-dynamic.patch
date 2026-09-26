@@ -1,0 +1,106 @@
+diff --git a/backend/src/settings/entities/merchant-settings.entity.ts b/backend/src/settings/entities/merchant-settings.entity.ts
+index cdd25a6..a5e87df 100644
+--- a/backend/src/settings/entities/merchant-settings.entity.ts
++++ b/backend/src/settings/entities/merchant-settings.entity.ts
+@@ -35,7 +35,7 @@ export class MerchantSettings {
+   @Column({ name: 'notify_customer_on_upload', default: false })
+   notifyCustomerOnUpload: boolean;
+ 
+-  @Column({ name: 'signed_url_expiry_seconds', default: 3600 })
++  @Column({ name: 'signed_url_expiry_seconds', default: 0 })
+   signedUrlExpirySeconds: number;
+ 
+   @Column({ type: 'text', name: 'custom_css', nullable: true })
+diff --git a/backend/src/settings/settings.service.ts b/backend/src/settings/settings.service.ts
+index 60270f1..bbbba25 100644
+--- a/backend/src/settings/settings.service.ts
++++ b/backend/src/settings/settings.service.ts
+@@ -39,7 +39,7 @@ export class SettingsService {
+         customMessages: {},
+         notifyMerchantOnUpload: true,
+         notifyCustomerOnUpload: false,
+-        signedUrlExpirySeconds: 3600,
++        signedUrlExpirySeconds: 0,
+         customCss: '',
+       });
+       await this.settingsRepository.save(settings);
+diff --git a/backend/src/uploads/uploads.module.ts b/backend/src/uploads/uploads.module.ts
+index 6dbd296..a7e0028 100644
+--- a/backend/src/uploads/uploads.module.ts
++++ b/backend/src/uploads/uploads.module.ts
+@@ -9,13 +9,14 @@ import { UploadRule } from './entities/upload-rule.entity';
+ import { Merchant } from '../auth/entities/merchant.entity';
+ import { Subscription } from '../billing/entities/subscription.entity';
+ import { Plan } from '../plans/entities/plan.entity';
++import { MerchantSettings } from '../settings/entities/merchant-settings.entity';
+ import { StorageModule } from '../storage/storage.module';
+ import { SecurityModule } from '../security/security.module';
+ import { PlanLimitGuard } from '../common/guards/plan-limit.guard';
+ 
+ @Module({
+   imports: [
+-    TypeOrmModule.forFeature([Upload, UploadField, UploadRule, Merchant, Subscription, Plan]),
++    TypeOrmModule.forFeature([Upload, UploadField, UploadRule, Merchant, Subscription, Plan, MerchantSettings]),
+     MulterModule.register({ limits: { fileSize: 2 * 1024 * 1024 * 1024 } }),
+     StorageModule,
+     SecurityModule,
+diff --git a/backend/src/uploads/uploads.service.ts b/backend/src/uploads/uploads.service.ts
+index 2bcfaf6..7eca334 100644
+--- a/backend/src/uploads/uploads.service.ts
++++ b/backend/src/uploads/uploads.service.ts
+@@ -10,6 +10,8 @@ import { StorageService } from '../storage/storage.service';
+ import { SecurityService } from '../security/security.service';
+ import { getImageDimensions } from '../common/utils/image-dimensions';
+ import { buildDownloadFilename } from '../common/utils/download-filename.util';
++import { MerchantSettings } from '../settings/entities/merchant-settings.entity';
++import { makeDownloadToken } from './download-token.util';
+ import { convertHeicToJpegIfNeeded, renameHeicToJpg } from '../common/utils/heic-support';
+ import { CreateUploadFieldDto } from './dto/create-upload-field.dto';
+ import { UpdateUploadFieldDto } from './dto/update-upload-field.dto';
+@@ -23,6 +25,7 @@ export class UploadsService {
+     @InjectRepository(Upload)        private readonly uploadRepo: Repository<Upload>,
+     @InjectRepository(UploadField)   private readonly fieldRepo: Repository<UploadField>,
+     @InjectRepository(Merchant)      private readonly merchantRepo: Repository<Merchant>,
++    @InjectRepository(MerchantSettings) private readonly settingsRepo: Repository<MerchantSettings>,
+     private readonly storageService: StorageService,
+     private readonly securityService: SecurityService,
+   ) {}
+@@ -305,7 +308,24 @@ export class UploadsService {
+     if (upload.status === UploadStatus.INFECTED) {
+       throw new ForbiddenException('File is infected and cannot be downloaded');
+     }
+-    return this.storageService.getSignedDownloadUrl(upload.s3Key, buildDownloadFilename(upload), 3600);
++
++    // Honour the merchant's "Download Link Expiry" setting instead of a fixed
++    // window. 0 = "Never expires".
++    const settings = await this.settingsRepo.findOne({ where: { merchantId } });
++    const expiry = settings?.signedUrlExpirySeconds ?? 0;
++    const filename = buildDownloadFilename(upload);
++
++    if (expiry > 0) {
++      // Temporary link that expires after the configured window.
++      return this.storageService.getSignedDownloadUrl(upload.s3Key, filename, expiry);
++    }
++
++    // "Never expires": a permanent app-served link. The HMAC token never
++    // expires; each request mints a fresh short-lived storage URL under the
++    // hood (via the existing token-authed file endpoint).
++    const base = (process.env.APP_URL || process.env.BACKEND_URL || '').replace(/\/$/, '');
++    const token = makeDownloadToken(uploadId);
++    return `${base}/api/v1/storefront/file/${uploadId}?token=${token}&download=1`;
+   }
+ 
+   async deleteUpload(merchantId: string, uploadId: string): Promise<void> {
+diff --git a/frontend/src/pages/SettingsPage.tsx b/frontend/src/pages/SettingsPage.tsx
+index 7139550..6c9c3f7 100644
+--- a/frontend/src/pages/SettingsPage.tsx
++++ b/frontend/src/pages/SettingsPage.tsx
+@@ -27,7 +27,7 @@ export function SettingsPage() {
+     notifyMerchantOnUpload: true,
+     notificationEmail: '',
+     notifyCustomerOnUpload: false,
+-    signedUrlExpirySeconds: 3600,
++    signedUrlExpirySeconds: 0,
+     customCss: '',
+     customMessages: {
+       fileTooLarge: '',

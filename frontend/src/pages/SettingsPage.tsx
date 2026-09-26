@@ -27,7 +27,7 @@ export function SettingsPage() {
     notifyMerchantOnUpload: true,
     notificationEmail: '',
     notifyCustomerOnUpload: false,
-    signedUrlExpirySeconds: 3600,
+    signedUrlExpirySeconds: 0,
     customCss: '',
     customMessages: {
       fileTooLarge: '',

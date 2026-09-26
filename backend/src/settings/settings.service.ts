@@ -39,7 +39,7 @@ export class SettingsService {
         customMessages: {},
         notifyMerchantOnUpload: true,
         notifyCustomerOnUpload: false,
-        signedUrlExpirySeconds: 3600,
+        signedUrlExpirySeconds: 0,
         customCss: '',
       });
       await this.settingsRepository.save(settings);

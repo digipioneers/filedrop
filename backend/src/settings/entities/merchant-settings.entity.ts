@@ -35,7 +35,7 @@ export class MerchantSettings {
   @Column({ name: 'notify_customer_on_upload', default: false })
   notifyCustomerOnUpload: boolean;
 
-  @Column({ name: 'signed_url_expiry_seconds', default: 3600 })
+  @Column({ name: 'signed_url_expiry_seconds', default: 0 })
   signedUrlExpirySeconds: number;
 
   @Column({ type: 'text', name: 'custom_css', nullable: true })
