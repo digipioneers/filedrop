@@ -1,0 +1,287 @@
+diff --git a/backend/src/admin/admin.controller.ts b/backend/src/admin/admin.controller.ts
+index ce38ad8..0d096d0 100644
+--- a/backend/src/admin/admin.controller.ts
++++ b/backend/src/admin/admin.controller.ts
+@@ -21,12 +21,24 @@ export class AdminController {
+     return this.adminService.getPlans();
+   }
+ 
++  @Post('plans')
++  @ApiOperation({ summary: 'Create a new plan' })
++  createPlan(@Body() body: any) {
++    return this.adminService.createPlan(body);
++  }
++
+   @Put('plans/:id')
+-  @ApiOperation({ summary: 'Update a plan price and limits' })
++  @ApiOperation({ summary: 'Update a plan (name, price, limits, features)' })
+   updatePlan(@Param('id') id: string, @Body() body: any) {
+     return this.adminService.updatePlan(id, body);
+   }
+ 
++  @Delete('plans/:id')
++  @ApiOperation({ summary: 'Delete (or deactivate if in use) a plan' })
++  deletePlan(@Param('id') id: string) {
++    return this.adminService.deletePlan(id);
++  }
++
+   // ── Merchants ────────────────────────────────────────────────────────────
+ 
+   @Get('merchants')
+diff --git a/backend/src/admin/admin.service.ts b/backend/src/admin/admin.service.ts
+index bddd1c1..de07570 100644
+--- a/backend/src/admin/admin.service.ts
++++ b/backend/src/admin/admin.service.ts
+@@ -1,4 +1,4 @@
+-import { Injectable, NotFoundException } from '@nestjs/common';
++import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+ import { InjectRepository } from '@nestjs/typeorm';
+ import { Repository } from 'typeorm';
+ import { Plan } from '../plans/entities/plan.entity';
+@@ -50,6 +50,64 @@ export class AdminService {
+     return saved;
+   }
+ 
++  /** Create a brand-new plan (super-admin). Generates a unique handle. */
++  async createPlan(dto: {
++    displayName?: string;
++    monthlyPrice?: number;
++    uploadsPerMonth?: number;
++    storageBytes?: number;
++    maxFileSizeBytes?: number;
++    features?: any;
++    isActive?: boolean;
++    sortOrder?: number;
++  }) {
++    const display = (dto.displayName || 'New Plan').trim();
++    const baseHandle =
++      display.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'plan';
++    let name = baseHandle;
++    let i = 1;
++    // Ensure the handle is unique (it's the immutable key subscriptions use).
++    while (await this.planRepo.findOne({ where: { name } })) {
++      name = `${baseHandle}-${i++}`;
++    }
++
++    const plan = this.planRepo.create({
++      name,
++      displayName: display,
++      monthlyPrice: dto.monthlyPrice != null ? Number(dto.monthlyPrice) : 0,
++      uploadsPerMonth: dto.uploadsPerMonth != null ? Number(dto.uploadsPerMonth) : 100,
++      storageBytes: dto.storageBytes != null ? Number(dto.storageBytes) : 2 * 1024 * 1024 * 1024,
++      maxFileSizeBytes: dto.maxFileSizeBytes != null ? Number(dto.maxFileSizeBytes) : 10 * 1024 * 1024,
++      features: dto.features || {},
++      isActive: dto.isActive !== false,
++      sortOrder: dto.sortOrder != null ? Number(dto.sortOrder) : 99,
++      isDefault: false, // new plans are never the default/free plan
++    });
++    return this.planRepo.save(plan);
++  }
++
++  /**
++   * Delete a plan (super-admin). Guards:
++   *  - the default (free) plan can never be deleted;
++   *  - a plan that still has subscriptions is deactivated (isActive=false)
++   *    instead of hard-deleted, so those merchants' records aren't orphaned.
++   */
++  async deletePlan(id: string): Promise<{ deleted: boolean; deactivated: boolean }> {
++    const plan = await this.planRepo.findOne({ where: { id } });
++    if (!plan) throw new NotFoundException('Plan not found');
++    if (plan.isDefault) {
++      throw new BadRequestException('The default (free) plan cannot be deleted.');
++    }
++    const subCount = await this.subRepo.count({ where: { planId: id } });
++    if (subCount > 0) {
++      plan.isActive = false;
++      await this.planRepo.save(plan);
++      return { deleted: false, deactivated: true };
++    }
++    await this.planRepo.delete(id);
++    return { deleted: true, deactivated: false };
++  }
++
+   // ── Merchants ────────────────────────────────────────────────────────────
+ 
+   async getMerchants() {
+diff --git a/backend/src/billing/billing.service.ts b/backend/src/billing/billing.service.ts
+index 5ce8082..ccc9773 100644
+--- a/backend/src/billing/billing.service.ts
++++ b/backend/src/billing/billing.service.ts
+@@ -42,7 +42,7 @@ export class BillingService {
+     });
+     const plan = sub
+       ? await this.planRepo.findOne({ where: { id: sub.planId } })
+-      : await this.planRepo.findOne({ where: { name: PlanName.FREE } });
++      : await this.planRepo.findOne({ where: { isDefault: true } });
+ 
+     // The frontend's "Current Usage" section reads monthlyUploads and
+     // storageUsedBytes directly off this response — they were never
+@@ -58,7 +58,7 @@ export class BillingService {
+     };
+   }
+ 
+-  async createSubscription(merchant: Merchant, planName: PlanName, returnUrl: string) {
++  async createSubscription(merchant: Merchant, planName: string, returnUrl: string) {
+     const plan = await this.planRepo.findOne({ where: { name: planName } });
+     if (!plan) throw new NotFoundException(`Plan ${planName} not found`);
+ 
+@@ -339,7 +339,7 @@ export class BillingService {
+   }
+ 
+   async activateFreePlan(merchantId: string) {
+-    const plan = await this.planRepo.findOne({ where: { name: PlanName.FREE } });
++    const plan = await this.planRepo.findOne({ where: { isDefault: true } });
+     if (!plan) throw new NotFoundException('Free plan not found');
+ 
+     await this.subRepo.update(
+diff --git a/backend/src/plans/entities/plan.entity.ts b/backend/src/plans/entities/plan.entity.ts
+index fb69c18..3b94775 100644
+--- a/backend/src/plans/entities/plan.entity.ts
++++ b/backend/src/plans/entities/plan.entity.ts
+@@ -15,8 +15,10 @@ export class Plan {
+   @PrimaryGeneratedColumn('uuid')
+   id: string;
+ 
+-  @Column({ type: 'enum', enum: PlanName, unique: true })
+-  name: PlanName;
++  // Stored as a free-text handle (no longer a fixed enum) so new plans can be
++  // added from the super-admin. Existing plans keep their handle ('free', etc.).
++  @Column({ length: 50, unique: true })
++  name: string;
+ 
+   @Column({ name: 'display_name', length: 100 })
+   displayName: string;
+@@ -48,6 +50,12 @@ export class Plan {
+   @Column({ name: 'sort_order', default: 0 })
+   sortOrder: number;
+ 
++  // Marks the default/free plan assigned on install and used as the fallback
++  // when a merchant has no active paid subscription. Exactly one plan should
++  // have this set. The default plan cannot be deleted from the admin.
++  @Column({ name: 'is_default', default: false })
++  isDefault: boolean;
++
+   @CreateDateColumn({ name: 'created_at' })
+   createdAt: Date;
+ 
+diff --git a/backend/src/plans/plans.seeder.ts b/backend/src/plans/plans.seeder.ts
+index e6defd1..5bf0f1f 100644
+--- a/backend/src/plans/plans.seeder.ts
++++ b/backend/src/plans/plans.seeder.ts
+@@ -24,6 +24,7 @@ export class PlansSeeder implements OnApplicationBootstrap {
+         // fallback) — displayed to merchants as "Development".
+         name: PlanName.FREE,
+         displayName: 'Development',
++        isDefault: true, // the fallback/default plan assigned on install
+         monthlyPrice: 0,
+         uploadsPerMonth: 250,
+         storageBytes: 2147483648,       // 2 GB
+diff --git a/backend/src/storefront/storefront.service.ts b/backend/src/storefront/storefront.service.ts
+index a74f104..43aa68a 100644
+--- a/backend/src/storefront/storefront.service.ts
++++ b/backend/src/storefront/storefront.service.ts
+@@ -441,7 +441,7 @@ export class StorefrontService {
+     });
+     const plan = sub
+       ? await this.planRepo.findOne({ where: { id: sub.planId } })
+-      : await this.planRepo.findOne({ where: { name: PlanName.FREE } });
++      : await this.planRepo.findOne({ where: { isDefault: true } });
+     return (plan?.features as Record<string, boolean>) || {};
+   }
+ 
+@@ -457,7 +457,7 @@ export class StorefrontService {
+     });
+     const plan = sub
+       ? await this.planRepo.findOne({ where: { id: sub.planId } })
+-      : await this.planRepo.findOne({ where: { name: PlanName.FREE } });
++      : await this.planRepo.findOne({ where: { isDefault: true } });
+     if (!plan) return;
+     // These are shown directly to the SHOPPER on the storefront (not the
+     // merchant), so they deliberately don't mention plan names or specific
+diff --git a/frontend/src/pages/admin/AdminPlans.tsx b/frontend/src/pages/admin/AdminPlans.tsx
+index 14c786e..eda5ad1 100644
+--- a/frontend/src/pages/admin/AdminPlans.tsx
++++ b/frontend/src/pages/admin/AdminPlans.tsx
+@@ -97,6 +97,45 @@ export function AdminPlans() {
+     setSaving('');
+   };
+ 
++  const createPlan = async () => {
++    setToast('');
++    try {
++      const r = await fetch(`${BACKEND}/admin/plans`, {
++        method: 'POST',
++        headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
++        body: JSON.stringify({
++          displayName: 'New Plan',
++          monthlyPrice: 0,
++          uploadsPerMonth: 100,
++          storageBytes: 2147483648,   // 2 GB
++          maxFileSizeBytes: 10485760, // 10 MB
++          features: {},
++          isActive: true,
++          sortOrder: 99,
++        }),
++      });
++      const d = await r.json();
++      if (r.ok) { setToast('New plan created — edit its details below.'); load(); }
++      else setToast(`Error: ${d.message}`);
++    } catch (err: any) { setToast(`Error: ${err.message}`); }
++  };
++
++  const deletePlan = async (id: string, displayName: string) => {
++    if (!window.confirm(`Delete the "${displayName}" plan?\n\nMerchants already on it keep it, but it will be hidden from new sign-ups.`)) return;
++    setToast('');
++    try {
++      const r = await fetch(`${BACKEND}/admin/plans/${id}`, {
++        method: 'DELETE',
++        headers: { 'x-admin-key': adminKey },
++      });
++      const d = await r.json().catch(() => ({}));
++      if (r.ok) {
++        setToast(d.deactivated ? 'Plan is in use — deactivated (hidden from new sign-ups).' : 'Plan deleted.');
++        load();
++      } else setToast(`Error: ${d.message || 'Failed to delete plan'}`);
++    } catch (err: any) { setToast(`Error: ${err.message}`); }
++  };
++
+   const f = { fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif' };
+ 
+   if (loading) return <div style={{ ...f, padding: 40, textAlign: 'center', color: '#637381' }}>Loading plans...</div>;
+@@ -120,7 +159,16 @@ export function AdminPlans() {
+   return (
+     <div style={{ ...f, padding: 32 }}>
+       <h1 style={{ fontSize: 24, fontWeight: 600, marginBottom: 8 }}>Plan Management</h1>
+-      <p style={{ color: '#637381', marginBottom: 24 }}>Edit pricing, limits and features for each plan</p>
++      <p style={{ color: '#637381', marginBottom: 16 }}>Add, edit or remove plans — pricing, limits and features. Changes apply to the app's Plan &amp; Billing page.</p>
++
++      <div style={{ marginBottom: 24 }}>
++        <button
++          onClick={createPlan}
++          style={{ background: '#008060', color: '#fff', border: 'none', borderRadius: 6, padding: '10px 20px', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}
++        >
++          + Add Plan
++        </button>
++      </div>
+ 
+       {toast && (
+         <div style={{ background: toast.startsWith('Error') ? '#fbeae5' : '#e3f1df', border: '1px solid', borderColor: toast.startsWith('Error') ? '#de3618' : '#008060', borderRadius: 8, padding: '12px 16px', marginBottom: 20 }}>
+@@ -194,7 +242,17 @@ export function AdminPlans() {
+             </div>
+           </div>
+ 
+-          <div style={{ padding: '0 24px 24px', display: 'flex', justifyContent: 'flex-end' }}>
++          <div style={{ padding: '0 24px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
++            <div>
++              {!plan.isDefault && (
++                <button
++                  onClick={() => deletePlan(plan.id, plan.displayName)}
++                  style={{ background: '#fff', color: '#de3618', border: '1px solid #de3618', borderRadius: 6, padding: '10px 20px', cursor: 'pointer', fontSize: 14, fontWeight: 500 }}
++                >
++                  Delete
++                </button>
++              )}
++            </div>
+             <button
+               onClick={() => save(plan.id)}
+               disabled={saving === plan.id}

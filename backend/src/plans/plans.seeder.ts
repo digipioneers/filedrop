@@ -24,6 +24,7 @@ export class PlansSeeder implements OnApplicationBootstrap {
         // fallback) — displayed to merchants as "Development".
         name: PlanName.FREE,
         displayName: 'Development',
+        isDefault: true, // the fallback/default plan assigned on install
         monthlyPrice: 0,
         uploadsPerMonth: 250,
         storageBytes: 2147483648,       // 2 GB

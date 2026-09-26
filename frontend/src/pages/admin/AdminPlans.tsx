@@ -97,6 +97,45 @@ export function AdminPlans() {
     setSaving('');
   };
 
+  const createPlan = async () => {
+    setToast('');
+    try {
+      const r = await fetch(`${BACKEND}/admin/plans`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
+        body: JSON.stringify({
+          displayName: 'New Plan',
+          monthlyPrice: 0,
+          uploadsPerMonth: 100,
+          storageBytes: 2147483648,   // 2 GB
+          maxFileSizeBytes: 10485760, // 10 MB
+          features: {},
+          isActive: true,
+          sortOrder: 99,
+        }),
+      });
+      const d = await r.json();
+      if (r.ok) { setToast('New plan created — edit its details below.'); load(); }
+      else setToast(`Error: ${d.message}`);
+    } catch (err: any) { setToast(`Error: ${err.message}`); }
+  };
+
+  const deletePlan = async (id: string, displayName: string) => {
+    if (!window.confirm(`Delete the "${displayName}" plan?\n\nMerchants already on it keep it, but it will be hidden from new sign-ups.`)) return;
+    setToast('');
+    try {
+      const r = await fetch(`${BACKEND}/admin/plans/${id}`, {
+        method: 'DELETE',
+        headers: { 'x-admin-key': adminKey },
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) {
+        setToast(d.deactivated ? 'Plan is in use — deactivated (hidden from new sign-ups).' : 'Plan deleted.');
+        load();
+      } else setToast(`Error: ${d.message || 'Failed to delete plan'}`);
+    } catch (err: any) { setToast(`Error: ${err.message}`); }
+  };
+
   const f = { fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif' };
 
   if (loading) return <div style={{ ...f, padding: 40, textAlign: 'center', color: '#637381' }}>Loading plans...</div>;
@@ -120,7 +159,16 @@ export function AdminPlans() {
   return (
     <div style={{ ...f, padding: 32 }}>
       <h1 style={{ fontSize: 24, fontWeight: 600, marginBottom: 8 }}>Plan Management</h1>
-      <p style={{ color: '#637381', marginBottom: 24 }}>Edit pricing, limits and features for each plan</p>
+      <p style={{ color: '#637381', marginBottom: 16 }}>Add, edit or remove plans — pricing, limits and features. Changes apply to the app's Plan &amp; Billing page.</p>
+
+      <div style={{ marginBottom: 24 }}>
+        <button
+          onClick={createPlan}
+          style={{ background: '#008060', color: '#fff', border: 'none', borderRadius: 6, padding: '10px 20px', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}
+        >
+          + Add Plan
+        </button>
+      </div>
 
       {toast && (
         <div style={{ background: toast.startsWith('Error') ? '#fbeae5' : '#e3f1df', border: '1px solid', borderColor: toast.startsWith('Error') ? '#de3618' : '#008060', borderRadius: 8, padding: '12px 16px', marginBottom: 20 }}>
@@ -194,7 +242,17 @@ export function AdminPlans() {
             </div>
           </div>
 
-          <div style={{ padding: '0 24px 24px', display: 'flex', justifyContent: 'flex-end' }}>
+          <div style={{ padding: '0 24px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              {!plan.isDefault && (
+                <button
+                  onClick={() => deletePlan(plan.id, plan.displayName)}
+                  style={{ background: '#fff', color: '#de3618', border: '1px solid #de3618', borderRadius: 6, padding: '10px 20px', cursor: 'pointer', fontSize: 14, fontWeight: 500 }}
+                >
+                  Delete
+                </button>
+              )}
+            </div>
             <button
               onClick={() => save(plan.id)}
               disabled={saving === plan.id}

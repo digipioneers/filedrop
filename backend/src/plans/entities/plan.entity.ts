@@ -15,8 +15,10 @@ export class Plan {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'enum', enum: PlanName, unique: true })
-  name: PlanName;
+  // Stored as a free-text handle (no longer a fixed enum) so new plans can be
+  // added from the super-admin. Existing plans keep their handle ('free', etc.).
+  @Column({ length: 50, unique: true })
+  name: string;
 
   @Column({ name: 'display_name', length: 100 })
   displayName: string;
@@ -47,6 +49,12 @@ export class Plan {
 
   @Column({ name: 'sort_order', default: 0 })
   sortOrder: number;
+
+  // Marks the default/free plan assigned on install and used as the fallback
+  // when a merchant has no active paid subscription. Exactly one plan should
+  // have this set. The default plan cannot be deleted from the admin.
+  @Column({ name: 'is_default', default: false })
+  isDefault: boolean;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

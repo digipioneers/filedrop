@@ -21,10 +21,22 @@ export class AdminController {
     return this.adminService.getPlans();
   }
 
+  @Post('plans')
+  @ApiOperation({ summary: 'Create a new plan' })
+  createPlan(@Body() body: any) {
+    return this.adminService.createPlan(body);
+  }
+
   @Put('plans/:id')
-  @ApiOperation({ summary: 'Update a plan price and limits' })
+  @ApiOperation({ summary: 'Update a plan (name, price, limits, features)' })
   updatePlan(@Param('id') id: string, @Body() body: any) {
     return this.adminService.updatePlan(id, body);
+  }
+
+  @Delete('plans/:id')
+  @ApiOperation({ summary: 'Delete (or deactivate if in use) a plan' })
+  deletePlan(@Param('id') id: string) {
+    return this.adminService.deletePlan(id);
   }
 
   // ── Merchants ────────────────────────────────────────────────────────────

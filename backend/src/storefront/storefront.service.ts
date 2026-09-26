@@ -441,7 +441,7 @@ export class StorefrontService {
     });
     const plan = sub
       ? await this.planRepo.findOne({ where: { id: sub.planId } })
-      : await this.planRepo.findOne({ where: { name: PlanName.FREE } });
+      : await this.planRepo.findOne({ where: { isDefault: true } });
     return (plan?.features as Record<string, boolean>) || {};
   }
 
@@ -457,7 +457,7 @@ export class StorefrontService {
     });
     const plan = sub
       ? await this.planRepo.findOne({ where: { id: sub.planId } })
-      : await this.planRepo.findOne({ where: { name: PlanName.FREE } });
+      : await this.planRepo.findOne({ where: { isDefault: true } });
     if (!plan) return;
     // These are shown directly to the SHOPPER on the storefront (not the
     // merchant), so they deliberately don't mention plan names or specific

@@ -42,7 +42,7 @@ export class BillingService {
     });
     const plan = sub
       ? await this.planRepo.findOne({ where: { id: sub.planId } })
-      : await this.planRepo.findOne({ where: { name: PlanName.FREE } });
+      : await this.planRepo.findOne({ where: { isDefault: true } });
 
     // The frontend's "Current Usage" section reads monthlyUploads and
     // storageUsedBytes directly off this response — they were never
@@ -58,7 +58,7 @@ export class BillingService {
     };
   }
 
-  async createSubscription(merchant: Merchant, planName: PlanName, returnUrl: string) {
+  async createSubscription(merchant: Merchant, planName: string, returnUrl: string) {
     const plan = await this.planRepo.findOne({ where: { name: planName } });
     if (!plan) throw new NotFoundException(`Plan ${planName} not found`);
 
@@ -339,7 +339,7 @@ export class BillingService {
   }
 
   async activateFreePlan(merchantId: string) {
-    const plan = await this.planRepo.findOne({ where: { name: PlanName.FREE } });
+    const plan = await this.planRepo.findOne({ where: { isDefault: true } });
     if (!plan) throw new NotFoundException('Free plan not found');
 
     await this.subRepo.update(
