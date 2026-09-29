@@ -15,6 +15,12 @@ export class AdminController {
 
   // ── Plans ────────────────────────────────────────────────────────────────
 
+  @Get('billing-mode')
+  @ApiOperation({ summary: 'Which billing mode the app runs in (app | managed)' })
+  getBillingMode() {
+    return { billingMode: (process.env.BILLING_MODE || 'app').toLowerCase() === 'managed' ? 'managed' : 'app' };
+  }
+
   @Get('plans')
   @ApiOperation({ summary: 'Get all plans' })
   getPlans() {

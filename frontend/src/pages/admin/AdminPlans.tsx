@@ -50,6 +50,7 @@ export function AdminPlans() {
   const [toast, setToast] = useState('');
   const [saving, setSaving] = useState('');
   const [edits, setEdits] = useState<Record<string, any>>({});
+  const [billingMode, setBillingMode] = useState<'app' | 'managed'>('app');
   const adminKey = localStorage.getItem('admin_key') || '';
 
   const load = () => {
@@ -93,6 +94,13 @@ export function AdminPlans() {
   };
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    fetch(`${BACKEND}/admin/billing-mode`, { headers: { 'x-admin-key': adminKey } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { const m = d?.data?.billingMode ?? d?.billingMode; if (m === 'managed') setBillingMode('managed'); })
+      .catch(() => {});
+  }, []);
 
   const save = async (id: string) => {
     setSaving(id);
@@ -196,6 +204,12 @@ export function AdminPlans() {
     <div style={{ ...f, padding: 32 }}>
       <h1 style={{ fontSize: 24, fontWeight: 600, marginBottom: 8 }}>Plan Management</h1>
       <p style={{ color: '#637381', marginBottom: 16 }}>Add, edit or remove plans — pricing, limits and features. Changes apply to the app's Plan &amp; Billing page.</p>
+
+      {billingMode === 'managed' && (
+        <div style={{ background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: 8, padding: '14px 18px', marginBottom: 20, fontSize: 14, lineHeight: 1.5 }}>
+          <strong>Shopify Managed Pricing is ON.</strong> Plan <strong>names, prices, trial days and limits are set in the Shopify Partner Dashboard</strong> — the price/limit fields below are reference-only and do not drive billing. What still matters here is the <strong>feature mapping</strong>: the features you tick on each plan are what that plan unlocks in the app. Make sure each plan's <em>Display Name</em> matches the plan name in Shopify so features map to the right tier.
+        </div>
+      )}
 
       <div style={{ marginBottom: 24 }}>
         <button

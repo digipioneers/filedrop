@@ -26,6 +26,98 @@ export class BillingService {
     return settings?.defaultTrialDays ?? 14;
   }
 
+  // ── Shopify Managed Pricing ────────────────────────────────────────────────
+  // When BILLING_MODE=managed, plan selection/checkout happens on Shopify's own
+  // hosted pricing page (Partner Dashboard-defined plans) instead of the app's
+  // in-app plan cards + appSubscriptionCreate flow. Default 'app' keeps the
+  // existing behaviour exactly, so enabling this is a deliberate, reversible
+  // switch via env var — nothing changes until it's set.
+  private get billingMode(): 'app' | 'managed' {
+    return (process.env.BILLING_MODE || 'app').toLowerCase() === 'managed' ? 'managed' : 'app';
+  }
+
+  /** Builds the Shopify-hosted Managed Pricing "Select a plan" URL for a shop. */
+  managedPricingUrl(shopDomain: string): string {
+    const storeHandle = (shopDomain || '').replace(/\.myshopify\.com$/i, '');
+    const appHandle = process.env.SHOPIFY_APP_HANDLE || 'filedrop-1';
+    return `https://admin.shopify.com/store/${storeHandle}/charges/${appHandle}/pricing_plans`;
+  }
+
+  /**
+   * In managed mode, Shopify owns the subscription. Read the shop's active
+   * managed subscription from Shopify and mirror it into our local Subscription
+   * table (matching the Shopify plan name to a local Plan by display name), so
+   * feature gating — which reads the local plan — stays correct. Best-effort:
+   * never throws; on any failure the merchant simply keeps their current local
+   * plan (or the default). Returns the resolved local Plan.
+   */
+  async syncManagedSubscription(merchant: Merchant): Promise<Plan | null> {
+    const defaultPlan = await this.planRepo.findOne({ where: { isDefault: true } });
+    if (!merchant?.accessToken) return defaultPlan;
+
+    let shopifyPlanName: string | null = null;
+    try {
+      const accessToken = await this.shopifyTokenService.getValidAccessToken(merchant);
+      const query = `query { currentAppInstallation { activeSubscriptions { name status } } }`;
+      const res = await axios.post(
+        `https://${merchant.shopDomain}/admin/api/2026-07/graphql.json`,
+        { query },
+        { headers: { 'X-Shopify-Access-Token': accessToken, 'Content-Type': 'application/json' }, timeout: 15000 },
+      );
+      const subs = res.data?.data?.currentAppInstallation?.activeSubscriptions ?? [];
+      const active = subs.find((s: any) => s?.status === 'ACTIVE') || subs[0];
+      shopifyPlanName = active?.name ?? null;
+    } catch (err: any) {
+      this.logger.warn(`Managed billing: could not read Shopify subscription for ${merchant.shopDomain}: ${err?.message}`);
+      // Fall through — keep whatever local plan the merchant already has.
+      const existing = await this.subRepo.findOne({
+        where: [
+          { merchantId: merchant.id, status: SubscriptionStatus.ACTIVE },
+          { merchantId: merchant.id, status: SubscriptionStatus.TRIAL },
+        ],
+        order: { createdAt: 'DESC' },
+      });
+      return existing?.planId ? this.planRepo.findOne({ where: { id: existing.planId } }) : defaultPlan;
+    }
+
+    // No paid managed plan → the shop is on the free/default plan.
+    if (!shopifyPlanName) {
+      await this.subRepo.update(
+        { merchantId: merchant.id, status: SubscriptionStatus.ACTIVE },
+        { status: SubscriptionStatus.CANCELLED },
+      );
+      return defaultPlan;
+    }
+
+    // Match Shopify's plan name to a local plan (case-insensitive, by display
+    // name first, then handle). This is the mapping the super-admin controls.
+    const plans = await this.planRepo.find();
+    const wanted = shopifyPlanName.trim().toLowerCase();
+    const matched =
+      plans.find((p) => (p.displayName || '').trim().toLowerCase() === wanted) ||
+      plans.find((p) => (p.name || '').trim().toLowerCase() === wanted) ||
+      defaultPlan;
+    if (!matched) return defaultPlan;
+
+    // Mirror into our local table so gating reflects the Shopify plan.
+    const current = await this.subRepo.findOne({
+      where: { merchantId: merchant.id, status: SubscriptionStatus.ACTIVE },
+      order: { createdAt: 'DESC' },
+    });
+    if (!current || current.planId !== matched.id) {
+      await this.subRepo.update(
+        { merchantId: merchant.id, status: SubscriptionStatus.ACTIVE },
+        { status: SubscriptionStatus.CANCELLED },
+      );
+      await this.subRepo.save(this.subRepo.create({
+        merchantId: merchant.id,
+        planId: matched.id,
+        status: SubscriptionStatus.ACTIVE,
+      }));
+    }
+    return matched;
+  }
+
   async getAllPlans() {
     const plans = await this.planRepo.find({ where: { isActive: true }, order: { sortOrder: 'ASC' } });
     const trialDays = await this.getDefaultTrialDays();
@@ -33,6 +125,15 @@ export class BillingService {
   }
 
   async getCurrentPlan(merchantId: string) {
+    const merchant = await this.merchantRepo.findOne({ where: { id: merchantId } });
+
+    // In managed mode, Shopify is the source of truth: sync the shop's active
+    // Shopify plan into our local table first, so the plan we return (and gating)
+    // reflect what the merchant actually selected on Shopify's pricing page.
+    if (this.billingMode === 'managed' && merchant) {
+      await this.syncManagedSubscription(merchant).catch(() => undefined);
+    }
+
     const sub = await this.subRepo.findOne({
       where: [
         { merchantId, status: SubscriptionStatus.ACTIVE },
@@ -44,21 +145,27 @@ export class BillingService {
       ? await this.planRepo.findOne({ where: { id: sub.planId } })
       : await this.planRepo.findOne({ where: { isDefault: true } });
 
-    // The frontend's "Current Usage" section reads monthlyUploads and
-    // storageUsedBytes directly off this response — they were never
-    // included here, so it always displayed 0 regardless of actual usage.
-    const merchant = await this.merchantRepo.findOne({ where: { id: merchantId } });
-
     return {
       subscription: sub,
       plan,
       monthlyUploads: merchant?.monthlyUploads ?? 0,
       storageUsedBytes: Number(merchant?.storageUsedBytes ?? 0),
       totalUploads: merchant?.totalUploads ?? 0,
+      // Tell the frontend which billing UI to show. In managed mode it renders
+      // a "Change plan on Shopify" button pointing at managedPricingUrl instead
+      // of the in-app plan cards.
+      billingMode: this.billingMode,
+      managedPricingUrl: merchant ? this.managedPricingUrl(merchant.shopDomain) : null,
     };
   }
 
   async createSubscription(merchant: Merchant, planName: string, returnUrl: string) {
+    // Managed mode: the app must NOT create its own app-subscription charge —
+    // Shopify hosts plan selection. Send the merchant to Shopify's pricing page.
+    if (this.billingMode === 'managed') {
+      return { confirmationUrl: this.managedPricingUrl(merchant.shopDomain), managed: true };
+    }
+
     const plan = await this.planRepo.findOne({ where: { name: planName } });
     if (!plan) throw new NotFoundException(`Plan ${planName} not found`);
 

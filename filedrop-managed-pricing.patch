@@ -1,0 +1,314 @@
+diff --git a/backend/src/admin/admin.controller.ts b/backend/src/admin/admin.controller.ts
+index 0d096d0..7f9a150 100644
+--- a/backend/src/admin/admin.controller.ts
++++ b/backend/src/admin/admin.controller.ts
+@@ -15,6 +15,12 @@ export class AdminController {
+ 
+   // ── Plans ────────────────────────────────────────────────────────────────
+ 
++  @Get('billing-mode')
++  @ApiOperation({ summary: 'Which billing mode the app runs in (app | managed)' })
++  getBillingMode() {
++    return { billingMode: (process.env.BILLING_MODE || 'app').toLowerCase() === 'managed' ? 'managed' : 'app' };
++  }
++
+   @Get('plans')
+   @ApiOperation({ summary: 'Get all plans' })
+   getPlans() {
+diff --git a/backend/src/billing/billing.service.ts b/backend/src/billing/billing.service.ts
+index ccc9773..ed117e7 100644
+--- a/backend/src/billing/billing.service.ts
++++ b/backend/src/billing/billing.service.ts
+@@ -26,6 +26,98 @@ export class BillingService {
+     return settings?.defaultTrialDays ?? 14;
+   }
+ 
++  // ── Shopify Managed Pricing ────────────────────────────────────────────────
++  // When BILLING_MODE=managed, plan selection/checkout happens on Shopify's own
++  // hosted pricing page (Partner Dashboard-defined plans) instead of the app's
++  // in-app plan cards + appSubscriptionCreate flow. Default 'app' keeps the
++  // existing behaviour exactly, so enabling this is a deliberate, reversible
++  // switch via env var — nothing changes until it's set.
++  private get billingMode(): 'app' | 'managed' {
++    return (process.env.BILLING_MODE || 'app').toLowerCase() === 'managed' ? 'managed' : 'app';
++  }
++
++  /** Builds the Shopify-hosted Managed Pricing "Select a plan" URL for a shop. */
++  managedPricingUrl(shopDomain: string): string {
++    const storeHandle = (shopDomain || '').replace(/\.myshopify\.com$/i, '');
++    const appHandle = process.env.SHOPIFY_APP_HANDLE || 'filedrop-1';
++    return `https://admin.shopify.com/store/${storeHandle}/charges/${appHandle}/pricing_plans`;
++  }
++
++  /**
++   * In managed mode, Shopify owns the subscription. Read the shop's active
++   * managed subscription from Shopify and mirror it into our local Subscription
++   * table (matching the Shopify plan name to a local Plan by display name), so
++   * feature gating — which reads the local plan — stays correct. Best-effort:
++   * never throws; on any failure the merchant simply keeps their current local
++   * plan (or the default). Returns the resolved local Plan.
++   */
++  async syncManagedSubscription(merchant: Merchant): Promise<Plan | null> {
++    const defaultPlan = await this.planRepo.findOne({ where: { isDefault: true } });
++    if (!merchant?.accessToken) return defaultPlan;
++
++    let shopifyPlanName: string | null = null;
++    try {
++      const accessToken = await this.shopifyTokenService.getValidAccessToken(merchant);
++      const query = `query { currentAppInstallation { activeSubscriptions { name status } } }`;
++      const res = await axios.post(
++        `https://${merchant.shopDomain}/admin/api/2026-07/graphql.json`,
++        { query },
++        { headers: { 'X-Shopify-Access-Token': accessToken, 'Content-Type': 'application/json' }, timeout: 15000 },
++      );
++      const subs = res.data?.data?.currentAppInstallation?.activeSubscriptions ?? [];
++      const active = subs.find((s: any) => s?.status === 'ACTIVE') || subs[0];
++      shopifyPlanName = active?.name ?? null;
++    } catch (err: any) {
++      this.logger.warn(`Managed billing: could not read Shopify subscription for ${merchant.shopDomain}: ${err?.message}`);
++      // Fall through — keep whatever local plan the merchant already has.
++      const existing = await this.subRepo.findOne({
++        where: [
++          { merchantId: merchant.id, status: SubscriptionStatus.ACTIVE },
++          { merchantId: merchant.id, status: SubscriptionStatus.TRIAL },
++        ],
++        order: { createdAt: 'DESC' },
++      });
++      return existing?.planId ? this.planRepo.findOne({ where: { id: existing.planId } }) : defaultPlan;
++    }
++
++    // No paid managed plan → the shop is on the free/default plan.
++    if (!shopifyPlanName) {
++      await this.subRepo.update(
++        { merchantId: merchant.id, status: SubscriptionStatus.ACTIVE },
++        { status: SubscriptionStatus.CANCELLED },
++      );
++      return defaultPlan;
++    }
++
++    // Match Shopify's plan name to a local plan (case-insensitive, by display
++    // name first, then handle). This is the mapping the super-admin controls.
++    const plans = await this.planRepo.find();
++    const wanted = shopifyPlanName.trim().toLowerCase();
++    const matched =
++      plans.find((p) => (p.displayName || '').trim().toLowerCase() === wanted) ||
++      plans.find((p) => (p.name || '').trim().toLowerCase() === wanted) ||
++      defaultPlan;
++    if (!matched) return defaultPlan;
++
++    // Mirror into our local table so gating reflects the Shopify plan.
++    const current = await this.subRepo.findOne({
++      where: { merchantId: merchant.id, status: SubscriptionStatus.ACTIVE },
++      order: { createdAt: 'DESC' },
++    });
++    if (!current || current.planId !== matched.id) {
++      await this.subRepo.update(
++        { merchantId: merchant.id, status: SubscriptionStatus.ACTIVE },
++        { status: SubscriptionStatus.CANCELLED },
++      );
++      await this.subRepo.save(this.subRepo.create({
++        merchantId: merchant.id,
++        planId: matched.id,
++        status: SubscriptionStatus.ACTIVE,
++      }));
++    }
++    return matched;
++  }
++
+   async getAllPlans() {
+     const plans = await this.planRepo.find({ where: { isActive: true }, order: { sortOrder: 'ASC' } });
+     const trialDays = await this.getDefaultTrialDays();
+@@ -33,6 +125,15 @@ export class BillingService {
+   }
+ 
+   async getCurrentPlan(merchantId: string) {
++    const merchant = await this.merchantRepo.findOne({ where: { id: merchantId } });
++
++    // In managed mode, Shopify is the source of truth: sync the shop's active
++    // Shopify plan into our local table first, so the plan we return (and gating)
++    // reflect what the merchant actually selected on Shopify's pricing page.
++    if (this.billingMode === 'managed' && merchant) {
++      await this.syncManagedSubscription(merchant).catch(() => undefined);
++    }
++
+     const sub = await this.subRepo.findOne({
+       where: [
+         { merchantId, status: SubscriptionStatus.ACTIVE },
+@@ -44,21 +145,27 @@ export class BillingService {
+       ? await this.planRepo.findOne({ where: { id: sub.planId } })
+       : await this.planRepo.findOne({ where: { isDefault: true } });
+ 
+-    // The frontend's "Current Usage" section reads monthlyUploads and
+-    // storageUsedBytes directly off this response — they were never
+-    // included here, so it always displayed 0 regardless of actual usage.
+-    const merchant = await this.merchantRepo.findOne({ where: { id: merchantId } });
+-
+     return {
+       subscription: sub,
+       plan,
+       monthlyUploads: merchant?.monthlyUploads ?? 0,
+       storageUsedBytes: Number(merchant?.storageUsedBytes ?? 0),
+       totalUploads: merchant?.totalUploads ?? 0,
++      // Tell the frontend which billing UI to show. In managed mode it renders
++      // a "Change plan on Shopify" button pointing at managedPricingUrl instead
++      // of the in-app plan cards.
++      billingMode: this.billingMode,
++      managedPricingUrl: merchant ? this.managedPricingUrl(merchant.shopDomain) : null,
+     };
+   }
+ 
+   async createSubscription(merchant: Merchant, planName: string, returnUrl: string) {
++    // Managed mode: the app must NOT create its own app-subscription charge —
++    // Shopify hosts plan selection. Send the merchant to Shopify's pricing page.
++    if (this.billingMode === 'managed') {
++      return { confirmationUrl: this.managedPricingUrl(merchant.shopDomain), managed: true };
++    }
++
+     const plan = await this.planRepo.findOne({ where: { name: planName } });
+     if (!plan) throw new NotFoundException(`Plan ${planName} not found`);
+ 
+diff --git a/frontend/src/pages/BillingPage.tsx b/frontend/src/pages/BillingPage.tsx
+index 28b0c33..7b04fba 100644
+--- a/frontend/src/pages/BillingPage.tsx
++++ b/frontend/src/pages/BillingPage.tsx
+@@ -220,6 +220,17 @@ export function BillingPage() {
+   const nearLimit = !limitReached && usagePercent >= 80;
+   const limitedResource = uploadsPercent >= storagePercent ? 'uploads' : 'storage';
+ 
++  // Managed billing: Shopify hosts the plan-selection page. We show a single
++  // "Change plan" button that breaks out of the embedded iframe to Shopify's
++  // pricing page instead of rendering our own plan cards + charge flow.
++  const isManaged = currentPlanData?.billingMode === 'managed';
++  const managedUrl: string | null = currentPlanData?.managedPricingUrl ?? null;
++  const openManagedPricing = () => {
++    if (!managedUrl) return;
++    if (window.top) window.top.location.href = managedUrl;
++    else window.location.href = managedUrl;
++  };
++
+   return (
+     <Page title="Plan & Billing" subtitle="Choose the right plan for your store">
+       <Layout>
+@@ -243,11 +254,15 @@ export function BillingPage() {
+                   ? `You've reached your ${currentPlan.displayName} plan's ${limitedResource} limit`
+                   : `You're close to your ${currentPlan.displayName} plan's ${limitedResource} limit`
+               }
+-              action={{
+-                content: `Upgrade to ${nextPlan.displayName}`,
+-                onAction: () => upgradeMutation.mutate(nextPlan.name),
+-                loading: upgradeMutation.isPending && pendingPlanName === nextPlan.name,
+-              }}
++              action={
++                isManaged
++                  ? { content: 'Change plan', onAction: openManagedPricing }
++                  : {
++                      content: `Upgrade to ${nextPlan.displayName}`,
++                      onAction: () => upgradeMutation.mutate(nextPlan.name),
++                      loading: upgradeMutation.isPending && pendingPlanName === nextPlan.name,
++                    }
++              }
+             >
+               {limitReached ? (
+                 <p>
+@@ -322,22 +337,46 @@ export function BillingPage() {
+           </Layout.Section>
+         )}
+ 
+-        {/* Plan cards */}
+-        <Layout.Section>
+-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+-            {(plansData ?? []).map((plan: any) => (
+-              <PlanCard
+-                key={plan.id}
+-                plan={plan}
+-                currentPlanName={currentPlan?.name ?? 'free'}
+-                onSelect={() => upgradeMutation.mutate(plan.name)}
+-                isLoading={pendingPlanName === plan.name}
+-                disabled={upgradeMutation.isPending}
+-                trialDays={defaultTrialDays}
+-              />
+-            ))}
+-          </div>
+-        </Layout.Section>
++        {/* Plans — managed billing sends the merchant to Shopify's hosted
++            pricing page; app billing renders the in-app plan cards. */}
++        {isManaged ? (
++          <Layout.Section>
++            <Card>
++              <div style={{ padding: '20px' }}>
++                <Text variant="headingMd" as="h2">Plans &amp; pricing</Text>
++                <div style={{ marginTop: 8 }}>
++                  <Text variant="bodyMd" tone="subdued" as="p">
++                    Plans, pricing and checkout are handled securely by Shopify. Click below to
++                    view all plans and change your subscription — you'll be taken to Shopify's
++                    plan-selection page. Your plan and features update automatically once you
++                    confirm there.
++                  </Text>
++                </div>
++                <div style={{ marginTop: 16 }}>
++                  <Button variant="primary" onClick={openManagedPricing} disabled={!managedUrl}>
++                    View plans &amp; change subscription
++                  </Button>
++                </div>
++              </div>
++            </Card>
++          </Layout.Section>
++        ) : (
++          <Layout.Section>
++            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
++              {(plansData ?? []).map((plan: any) => (
++                <PlanCard
++                  key={plan.id}
++                  plan={plan}
++                  currentPlanName={currentPlan?.name ?? 'free'}
++                  onSelect={() => upgradeMutation.mutate(plan.name)}
++                  isLoading={pendingPlanName === plan.name}
++                  disabled={upgradeMutation.isPending}
++                  trialDays={defaultTrialDays}
++                />
++              ))}
++            </div>
++          </Layout.Section>
++        )}
+ 
+         {/* Billing info */}
+         {subscription && subscription.status !== 'trial' && (
+diff --git a/frontend/src/pages/admin/AdminPlans.tsx b/frontend/src/pages/admin/AdminPlans.tsx
+index a9649e7..ac33172 100644
+--- a/frontend/src/pages/admin/AdminPlans.tsx
++++ b/frontend/src/pages/admin/AdminPlans.tsx
+@@ -50,6 +50,7 @@ export function AdminPlans() {
+   const [toast, setToast] = useState('');
+   const [saving, setSaving] = useState('');
+   const [edits, setEdits] = useState<Record<string, any>>({});
++  const [billingMode, setBillingMode] = useState<'app' | 'managed'>('app');
+   const adminKey = localStorage.getItem('admin_key') || '';
+ 
+   const load = () => {
+@@ -94,6 +95,13 @@ export function AdminPlans() {
+ 
+   useEffect(() => { load(); }, []);
+ 
++  useEffect(() => {
++    fetch(`${BACKEND}/admin/billing-mode`, { headers: { 'x-admin-key': adminKey } })
++      .then(r => r.ok ? r.json() : null)
++      .then(d => { const m = d?.data?.billingMode ?? d?.billingMode; if (m === 'managed') setBillingMode('managed'); })
++      .catch(() => {});
++  }, []);
++
+   const save = async (id: string) => {
+     setSaving(id);
+     const e = edits[id];
+@@ -197,6 +205,12 @@ export function AdminPlans() {
+       <h1 style={{ fontSize: 24, fontWeight: 600, marginBottom: 8 }}>Plan Management</h1>
+       <p style={{ color: '#637381', marginBottom: 16 }}>Add, edit or remove plans — pricing, limits and features. Changes apply to the app's Plan &amp; Billing page.</p>
+ 
++      {billingMode === 'managed' && (
++        <div style={{ background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: 8, padding: '14px 18px', marginBottom: 20, fontSize: 14, lineHeight: 1.5 }}>
++          <strong>Shopify Managed Pricing is ON.</strong> Plan <strong>names, prices, trial days and limits are set in the Shopify Partner Dashboard</strong> — the price/limit fields below are reference-only and do not drive billing. What still matters here is the <strong>feature mapping</strong>: the features you tick on each plan are what that plan unlocks in the app. Make sure each plan's <em>Display Name</em> matches the plan name in Shopify so features map to the right tier.
++        </div>
++      )}
++
+       <div style={{ marginBottom: 24 }}>
+         <button
+           onClick={createPlan}

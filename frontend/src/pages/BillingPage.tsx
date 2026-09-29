@@ -220,6 +220,17 @@ export function BillingPage() {
   const nearLimit = !limitReached && usagePercent >= 80;
   const limitedResource = uploadsPercent >= storagePercent ? 'uploads' : 'storage';
 
+  // Managed billing: Shopify hosts the plan-selection page. We show a single
+  // "Change plan" button that breaks out of the embedded iframe to Shopify's
+  // pricing page instead of rendering our own plan cards + charge flow.
+  const isManaged = currentPlanData?.billingMode === 'managed';
+  const managedUrl: string | null = currentPlanData?.managedPricingUrl ?? null;
+  const openManagedPricing = () => {
+    if (!managedUrl) return;
+    if (window.top) window.top.location.href = managedUrl;
+    else window.location.href = managedUrl;
+  };
+
   return (
     <Page title="Plan & Billing" subtitle="Choose the right plan for your store">
       <Layout>
@@ -243,11 +254,15 @@ export function BillingPage() {
                   ? `You've reached your ${currentPlan.displayName} plan's ${limitedResource} limit`
                   : `You're close to your ${currentPlan.displayName} plan's ${limitedResource} limit`
               }
-              action={{
-                content: `Upgrade to ${nextPlan.displayName}`,
-                onAction: () => upgradeMutation.mutate(nextPlan.name),
-                loading: upgradeMutation.isPending && pendingPlanName === nextPlan.name,
-              }}
+              action={
+                isManaged
+                  ? { content: 'Change plan', onAction: openManagedPricing }
+                  : {
+                      content: `Upgrade to ${nextPlan.displayName}`,
+                      onAction: () => upgradeMutation.mutate(nextPlan.name),
+                      loading: upgradeMutation.isPending && pendingPlanName === nextPlan.name,
+                    }
+              }
             >
               {limitReached ? (
                 <p>
@@ -322,22 +337,46 @@ export function BillingPage() {
           </Layout.Section>
         )}
 
-        {/* Plan cards */}
-        <Layout.Section>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
-            {(plansData ?? []).map((plan: any) => (
-              <PlanCard
-                key={plan.id}
-                plan={plan}
-                currentPlanName={currentPlan?.name ?? 'free'}
-                onSelect={() => upgradeMutation.mutate(plan.name)}
-                isLoading={pendingPlanName === plan.name}
-                disabled={upgradeMutation.isPending}
-                trialDays={defaultTrialDays}
-              />
-            ))}
-          </div>
-        </Layout.Section>
+        {/* Plans — managed billing sends the merchant to Shopify's hosted
+            pricing page; app billing renders the in-app plan cards. */}
+        {isManaged ? (
+          <Layout.Section>
+            <Card>
+              <div style={{ padding: '20px' }}>
+                <Text variant="headingMd" as="h2">Plans &amp; pricing</Text>
+                <div style={{ marginTop: 8 }}>
+                  <Text variant="bodyMd" tone="subdued" as="p">
+                    Plans, pricing and checkout are handled securely by Shopify. Click below to
+                    view all plans and change your subscription — you'll be taken to Shopify's
+                    plan-selection page. Your plan and features update automatically once you
+                    confirm there.
+                  </Text>
+                </div>
+                <div style={{ marginTop: 16 }}>
+                  <Button variant="primary" onClick={openManagedPricing} disabled={!managedUrl}>
+                    View plans &amp; change subscription
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          </Layout.Section>
+        ) : (
+          <Layout.Section>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+              {(plansData ?? []).map((plan: any) => (
+                <PlanCard
+                  key={plan.id}
+                  plan={plan}
+                  currentPlanName={currentPlan?.name ?? 'free'}
+                  onSelect={() => upgradeMutation.mutate(plan.name)}
+                  isLoading={pendingPlanName === plan.name}
+                  disabled={upgradeMutation.isPending}
+                  trialDays={defaultTrialDays}
+                />
+              ))}
+            </div>
+          </Layout.Section>
+        )}
 
         {/* Billing info */}
         {subscription && subscription.status !== 'trial' && (
