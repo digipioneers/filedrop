@@ -35,9 +35,12 @@ export class ProductsService {
     const accessToken = await this.shopifyTokenService.getValidAccessToken(merchant);
 
     while (url) {
-      const res = await axios.get(url, {
-        headers: { 'X-Shopify-Access-Token': accessToken },
-      });
+      const pageUrl: string = url;
+      const res = await this.shopifyRequestWithRetry(() =>
+        axios.get(pageUrl, {
+          headers: { 'X-Shopify-Access-Token': accessToken },
+        }),
+      );
 
       const products: any[] = res.data.products ?? [];
 
@@ -116,12 +119,161 @@ export class ProductsService {
       ? { merchantId, isActive: true, title: Like(`%${trimmed}%`) }
       : { merchantId, isActive: true };
 
-    const products = await this.productRepo.find({
+    let products = await this.productRepo.find({
       where,
       take: limit,
       order: { title: 'ASC' },
     });
+
+    // Live fallback: if the merchant typed a term and the local cache has no
+    // match, the product may simply not be cached yet (newly added, or the
+    // background sync was slow / rate-limited and never reached it). Instead of
+    // showing "No products found" for a product that really exists, ask Shopify
+    // directly, cache the hits, then re-read. This is what makes the picker
+    // consistent — a product in the store is always findable, not "sometimes".
+    if (trimmed && products.length === 0) {
+      try {
+        const added = await this.liveSearchShopify(merchantId, trimmed, limit);
+        if (added > 0) {
+          products = await this.productRepo.find({
+            where,
+            take: limit,
+            order: { title: 'ASC' },
+          });
+        }
+      } catch (err: any) {
+        this.logger.warn(`Live product search fallback failed: ${err?.message}`);
+      }
+    }
+
     return products;
+  }
+
+  /**
+   * Query Shopify directly for products whose title matches `term`, and upsert
+   * them into the local cache. Returns how many products were cached. Used as a
+   * fallback when the local LIKE search finds nothing, so the picker never says
+   * "No products found" for a product that actually exists in the store.
+   *
+   * Uses GraphQL (one call, supports partial `title:*term*` matching) and strips
+   * gids to the numeric form the rest of the app caches and matches against.
+   * Collections are preserved for already-cached rows and left empty for new
+   * ones (they get filled by the next full sync / product webhook) — we skip the
+   * per-product collection N+1 here to keep the fallback fast.
+   */
+  private async liveSearchShopify(
+    merchantId: string,
+    term: string,
+    limit: number,
+  ): Promise<number> {
+    const merchant = await this.merchantRepo.findOne({ where: { id: merchantId } });
+    if (!merchant) return 0;
+
+    // Sanitise the term for Shopify's search syntax (drop quotes/backslashes
+    // that would break the query string) and wrap in wildcards for partial.
+    const safe = term.replace(/["\\]/g, ' ').trim();
+    if (!safe) return 0;
+
+    const accessToken = await this.shopifyTokenService.getValidAccessToken(merchant);
+    const gql = `
+      query ($q: String!, $n: Int!) {
+        products(first: $n, query: $q) {
+          edges { node {
+            id title handle productType tags
+            featuredImage { url }
+            variants(first: 100) { edges { node { id title sku price } } }
+          } }
+        }
+      }`;
+
+    const res = await this.shopifyRequestWithRetry(() =>
+      axios.post(
+        `https://${merchant.shopDomain}/admin/api/2026-07/graphql.json`,
+        { query: gql, variables: { q: `title:*${safe}*`, n: Math.min(Number(limit) || 20, 100) } },
+        { headers: { 'X-Shopify-Access-Token': accessToken, 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const errors = res.data?.errors;
+    if (errors) {
+      this.logger.warn(`Live product GraphQL search returned errors: ${JSON.stringify(errors)}`);
+      return 0;
+    }
+
+    const edges: any[] = res.data?.data?.products?.edges ?? [];
+    if (!edges.length) return 0;
+
+    const numericProductId = (gid: string) =>
+      String(gid).replace(/^gid:\/\/shopify\/Product\//, '');
+    const numericVariantId = (gid: string) =>
+      String(gid).replace(/^gid:\/\/shopify\/ProductVariant\//, '');
+
+    let cached = 0;
+    for (const edge of edges) {
+      const n = edge?.node;
+      if (!n) continue;
+      const shopifyProductId = numericProductId(n.id);
+
+      // Preserve collections already cached for this product; only new rows
+      // start with [] (filled later by full sync / webhook).
+      const existing = await this.productRepo.findOne({
+        where: { merchantId, shopifyProductId },
+      });
+
+      await this.productRepo.upsert(
+        {
+          merchantId,
+          shopifyProductId,
+          title: n.title,
+          handle: n.handle,
+          productType: n.productType,
+          tags: Array.isArray(n.tags) ? n.tags : [],
+          variants: (n.variants?.edges ?? []).map((ve: any) => ({
+            id: numericVariantId(ve?.node?.id),
+            title: ve?.node?.title,
+            sku: ve?.node?.sku,
+            price: ve?.node?.price,
+          })),
+          collections: existing?.collections ?? [],
+          imageUrl: n.featuredImage?.url ?? existing?.imageUrl ?? null,
+          isActive: true,
+        },
+        ['merchantId', 'shopifyProductId'],
+      );
+      cached++;
+    }
+
+    this.logger.log(`Live search cached ${cached} product(s) for "${term}" (merchant ${merchantId}).`);
+    return cached;
+  }
+
+  /**
+   * Call a Shopify endpoint with retry/backoff on 429 (rate limit) and 5xx, so a
+   * single throttled response doesn't abort a sync and leave a half-filled cache
+   * — one of the causes of the picker intermittently missing products.
+   */
+  private async shopifyRequestWithRetry<T>(
+    fn: () => Promise<T>,
+    attempts = 4,
+  ): Promise<T> {
+    let lastErr: any;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await fn();
+      } catch (err: any) {
+        lastErr = err;
+        const status = err?.response?.status;
+        const retryable = status === 429 || (status >= 500 && status < 600);
+        if (!retryable || i === attempts - 1) throw err;
+        const retryAfter = Number(err?.response?.headers?.['retry-after']);
+        const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+          ? retryAfter * 1000
+          : 500 * 2 ** i; // 0.5s, 1s, 2s backoff
+        this.logger.warn(`Shopify ${status} — retrying in ${waitMs}ms (attempt ${i + 1}/${attempts}).`);
+        await new Promise((r) => setTimeout(r, waitMs));
+      }
+    }
+    throw lastErr;
   }
 
   async getCollections(merchantId: string): Promise<{ id: string; title: string }[]> {
